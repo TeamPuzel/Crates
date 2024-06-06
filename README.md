@@ -1,1 +1,1 @@
-A Rust crate browser for GNOME
+# A Rust crate browser for GNOME.
