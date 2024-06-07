@@ -14,6 +14,7 @@ pub const Search = struct {
 
 pub const Crate = struct {
     name: [:0]const u8,
+    documentation: ?[:0]const u8,
     homepage: ?[:0]const u8,
     repository: ?[:0]const u8,
     max_version: [:0]const u8,

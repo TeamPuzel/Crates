@@ -9,5 +9,7 @@
     <file preprocess="xml-stripblanks">view-more-horizontal-symbolic.svg</file>
     <file preprocess="xml-stripblanks">left-symbolic.svg</file>
     <file preprocess="xml-stripblanks">right-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">open-book-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">external-link-symbolic.svg</file>
   </gresource>
 </gresources>

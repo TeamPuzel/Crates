@@ -62,7 +62,7 @@ fn activate() callconv(.C) void {
     
     search_entry = c.gtk_search_entry_new();
     c.gtk_search_entry_set_placeholder_text(@ptrCast(search_entry), "Search crates.io");
-    c.gtk_search_entry_set_search_delay(@ptrCast(search_entry), 1000);
+    c.gtk_search_entry_set_search_delay(@ptrCast(search_entry), 1000); // TODO: Shorten?
     _ = c.g_signal_connect_data(search_entry, "search-changed", @ptrCast(&searchSubmit), null, null, 0);
     
     c.gtk_box_append(@ptrCast(search_box), search_entry);
@@ -114,7 +114,15 @@ fn searchSubmitKeepingPage(self: *c.GtkSearchEntry) callconv(.C) void {
     searchSubmitReal(slice);
 }
 
+/// The allocator for list data. It is located outside the function to extend the lifetime of the model.
+var list_arena: ?std.heap.ArenaAllocator = null;
+
 fn searchSubmitReal(query: []const u8) void {
+    if (list_arena != null) list_arena.?.deinit();
+    list_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    
+    const arena = list_arena.?.allocator();
+    
     if (query.len == 0) {
         const placeholder_label = c.gtk_label_new("No search query");
         c.gtk_widget_set_hexpand(placeholder_label, 0);
@@ -126,10 +134,9 @@ fn searchSubmitReal(query: []const u8) void {
     }
     
     const response = api.get(query, current_page, std.heap.c_allocator) catch |err| std.debug.panic("{!}", .{ err });
+    defer std.heap.c_allocator.free(response);
     
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    // defer arena.deinit(); // CRITICAL: MOVE THIS OUT OF THE FUNCTION, THE LIFETIME MUST OUTLIVE THE LIST UI
-    const parsed = std.json.parseFromSliceLeaky(api.Search, arena.allocator(), response, .{ .ignore_unknown_fields = true }) catch unreachable;
+    const parsed = std.json.parseFromSliceLeaky(api.Search, arena, response, .{ .ignore_unknown_fields = true }) catch unreachable;
     
     const content = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
     
@@ -141,7 +148,7 @@ fn searchSubmitReal(query: []const u8) void {
     c.gtk_widget_set_margin_end(header, 16);
     
     const result_count = c.gtk_label_new(
-        std.fmt.allocPrintZ(arena.allocator(), "{d} results", .{ parsed.meta.total }) catch unreachable
+        std.fmt.allocPrintZ(arena, "{d} results", .{ parsed.meta.total }) catch unreachable
     );
     c.gtk_style_context_add_class(c.gtk_widget_get_style_context(result_count), "dim-label");
     c.gtk_box_append(@ptrCast(header), result_count);
@@ -151,7 +158,7 @@ fn searchSubmitReal(query: []const u8) void {
     const total_pages = @divTrunc(parsed.meta.total, api.per_page) + 1;
     
     const page_label = c.gtk_label_new(
-        std.fmt.allocPrintZ(arena.allocator(), "Page {d} of {d}", .{ current_page, total_pages }) catch unreachable
+        std.fmt.allocPrintZ(arena, "Page {d} of {d}", .{ current_page, total_pages }) catch unreachable
     );
     c.gtk_style_context_add_class(c.gtk_widget_get_style_context(page_label), "dim-label");
     c.gtk_box_append(@ptrCast(header), page_label);
@@ -196,10 +203,10 @@ fn searchSubmitReal(query: []const u8) void {
         c.gtk_widget_set_margin_start(row_header, 12);
         c.gtk_widget_set_margin_end(row_header, 12);
         
-        const title_label = c.gtk_label_new(std.fmt.allocPrintZ(arena.allocator(), "<b><span>{s}</span></b>", .{ crate.name }) catch unreachable);
+        const title_label = c.gtk_label_new(std.fmt.allocPrintZ(arena, "<b><span>{s}</span></b>", .{ crate.name }) catch unreachable);
         c.gtk_label_set_use_markup(@ptrCast(title_label), 1);
         c.gtk_box_append(@ptrCast(row_header), title_label);
-        const description_label = c.gtk_label_new(std.fmt.allocPrintZ(arena.allocator(), "{s}", .{ std.mem.sliceTo(crate.description.ptr, '\n') }) catch unreachable);
+        const description_label = c.gtk_label_new(std.fmt.allocPrintZ(arena, "{s}", .{ std.mem.sliceTo(crate.description.ptr, '\n') }) catch unreachable);
         c.gtk_label_set_ellipsize(@ptrCast(description_label), c.PANGO_ELLIPSIZE_END);
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(description_label), "dim-label");
         c.gtk_box_append(@ptrCast(row_header), description_label);
@@ -207,6 +214,7 @@ fn searchSubmitReal(query: []const u8) void {
         c.gtk_box_append(@ptrCast(row), row_header);
         
         const row_detail = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
+        // c.gtk_widget_set_halign(row_detail, c.GTK_ALIGN_END);
         // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row_detail), "toolbar");
         // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row_detail), "linked");
         c.gtk_widget_set_size_request(row_detail, -1, 32);
@@ -222,15 +230,25 @@ fn searchSubmitReal(query: []const u8) void {
         c.gtk_widget_set_tooltip_text(repo_button, "Repository");
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(repo_button), "circular");
         c.gtk_box_append(@ptrCast(row_detail), repo_button);
-        const more_button = c.gtk_button_new_from_icon_name("view-more-horizontal-symbolic");
-        c.gtk_widget_set_tooltip_text(more_button, "More");
+        const doc_button = c.gtk_button_new_from_icon_name("open-book-symbolic");
+        c.gtk_widget_set_tooltip_text(doc_button, "Documentation");
+        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(doc_button), "circular");
+        c.gtk_box_append(@ptrCast(row_detail), doc_button);
+        const more_button = c.gtk_button_new_from_icon_name("external-link-symbolic");
+        c.gtk_widget_set_tooltip_text(more_button, "Open");
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(more_button), "circular");
         c.gtk_box_append(@ptrCast(row_detail), more_button);
         
         if (crate.homepage == null) c.gtk_widget_set_sensitive(website_button, 0)
-        else _ = c.g_signal_connect_data(website_button, "clicked", @ptrCast(&openWebsiteForCrate), @constCast(@ptrCast(crate.homepage.?.ptr)), null, 0);
-        if (crate.repository == null) c.gtk_widget_set_sensitive(repo_button, 0);
-        
+        else _ = c.g_signal_connect_data(website_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.homepage.?.ptr)), null, 0);
+        if (crate.repository == null) c.gtk_widget_set_sensitive(repo_button, 0)
+        else _ = c.g_signal_connect_data(repo_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.repository.?.ptr)), null, 0);
+        if (crate.documentation == null) c.gtk_widget_set_sensitive(doc_button, 0)
+        else _ = c.g_signal_connect_data(doc_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.documentation.?.ptr)), null, 0);
+        _ = c.g_signal_connect_data(more_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(
+            std.fmt.allocPrintZ(arena, "https://crates.io/crates/{s}", .{ crate.name }) catch unreachable
+        )), null, 0);
+         
         c.gtk_box_append(@ptrCast(row), row_detail);
         
         c.gtk_box_append(@ptrCast(list), row);
@@ -264,7 +282,7 @@ fn searchSubmitReal(query: []const u8) void {
     c.gtk_window_set_focus(@ptrCast(window), null);
 }
 
-fn openWebsiteForCrate(_: *c.GtkButton, addr: [*c]const u8) callconv(.C) void {
+fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
     c.gtk_show_uri(@ptrCast(window), addr, 0);
 }
 
