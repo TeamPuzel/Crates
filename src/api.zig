@@ -4,16 +4,16 @@ const c = @cImport({
 });
 
 pub const Search = struct {
-    crates: std.ArrayList(Crate),
+    crates: []Crate,
     meta: struct {
         total: usize
     }
 };
 
 pub const Crate = struct {
-    name: []const u8,
-    max_version: []const u8,
-    description: []const u8
+    name: [:0]const u8,
+    max_version: [:0]const u8,
+    description: [:0]const u8
 };
 
 var response_buf = std.ArrayList(u8).init(std.heap.c_allocator);

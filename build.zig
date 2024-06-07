@@ -16,6 +16,11 @@ pub fn build(b: *std.Build) void {
     
     _ = b.run(&.{ "sh", "-c", "cd resources; glib-compile-resources resources.gresource.xml" });
     const res = b.addInstallBinFile(b.path("resources/resources.gresource"), "resources.gresource");
+    const desktop = b.addInstallBinFile(b.path("resources/com.github.TeamPuzel.Crates.desktop"), "com.github.TeamPuzel.Crates.desktop");
+    const icon = b.addInstallBinFile(b.path("resources/cargo.svg"), "com.github.TeamPuzel.Crates.svg");
+    
+    _ = b.run(&.{ "sh", "-c", "cd resources; cp ./cargo.svg ~/.icons/com.github.TeamPuzel.Crates.svg" });
+    _ = b.run(&.{ "sh", "-c", "sudo desktop-file-install resources/com.github.TeamPuzel.Crates.desktop" });
     
     b.installArtifact(exe);
     
@@ -28,6 +33,8 @@ pub fn build(b: *std.Build) void {
     
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&res.step);
+    run_step.dependOn(&desktop.step);
+    run_step.dependOn(&icon.step);
     run_step.dependOn(&run_cmd.step);
     
     const exe_unit_tests = b.addTest(.{
