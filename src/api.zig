@@ -3,6 +3,8 @@ const c = @cImport({
     @cInclude("curl/curl.h");
 });
 
+pub const per_page = 50;
+
 pub const Search = struct {
     crates: []Crate,
     meta: struct {
@@ -12,7 +14,13 @@ pub const Search = struct {
 
 pub const Crate = struct {
     name: [:0]const u8,
+    homepage: ?[:0]const u8,
+    repository: ?[:0]const u8,
     max_version: [:0]const u8,
+    max_stable_version: ?[:0]const u8,
+    newest_version: [:0]const u8,
+    downloads: usize,
+    recent_downloads: usize,
     description: [:0]const u8
 };
 
@@ -27,7 +35,7 @@ pub fn get(query: []const u8, page: usize, alloc: std.mem.Allocator) ![]u8 {
     const curl = c.curl_easy_init() orelse return error.CurlInit;
     defer c.curl_easy_cleanup(curl);
     
-    const url = try std.fmt.allocPrintZ(std.heap.c_allocator, "https://crates.io/api/v1/crates?per_page=100&q={s}&page={d}", .{ query, page });
+    const url = try std.fmt.allocPrintZ(std.heap.c_allocator, std.fmt.comptimePrint("https://crates.io/api/v1/crates?per_page={d}", .{ per_page }) ++ "&q={s}&page={d}", .{ query, page });
     defer std.heap.c_allocator.free(url);
     
     _ = c.curl_easy_setopt(curl, c.CURLOPT_URL, url.ptr);

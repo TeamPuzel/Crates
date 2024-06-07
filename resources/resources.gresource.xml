@@ -2,5 +2,12 @@
 <gresources>
   <gresource prefix="/com/github/teampuzel/icons/scalable/actions/">
     <file preprocess="xml-stripblanks">search-global-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">git-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">globe-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">more-small-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">view-more-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">view-more-horizontal-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">left-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">right-symbolic.svg</file>
   </gresource>
 </gresources>
