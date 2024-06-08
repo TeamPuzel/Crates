@@ -1,6 +1,9 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const dev_install = b.option(bool, "dev-install", "Install icons and the desktop file") orelse false;
+    const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
+    
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
         
@@ -8,19 +11,25 @@ pub fn build(b: *std.Build) void {
         .name = "crates",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = optimize
     });
     exe.linkLibC();
     exe.linkSystemLibrary("libadwaita-1");
     exe.linkSystemLibrary("libcurl");
+    
+    const options = b.addOptions();
+    options.addOption(bool, "stable", stable);
+    exe.root_module.addOptions("config", options);
     
     _ = b.run(&.{ "sh", "-c", "cd resources; glib-compile-resources resources.gresource.xml" });
     const res = b.addInstallBinFile(b.path("resources/resources.gresource"), "resources.gresource");
     const desktop = b.addInstallBinFile(b.path("resources/com.github.TeamPuzel.Crates.desktop"), "com.github.TeamPuzel.Crates.desktop");
     const icon = b.addInstallBinFile(b.path("resources/cargo.svg"), "com.github.TeamPuzel.Crates.svg");
     
-    _ = b.run(&.{ "sh", "-c", "cd resources; cp ./cargo.svg ~/.icons/com.github.TeamPuzel.Crates.svg" });
-    _ = b.run(&.{ "sh", "-c", "sudo desktop-file-install resources/com.github.TeamPuzel.Crates.desktop" });
+    if (dev_install) {
+        _ = b.run(&.{ "sh", "-c", "cd resources; cp ./cargo.svg ~/.icons/com.github.TeamPuzel.Crates.svg" });
+        _ = b.run(&.{ "sh", "-c", "sudo desktop-file-install resources/com.github.TeamPuzel.Crates.desktop" });
+    }
     
     b.installArtifact(exe);
     

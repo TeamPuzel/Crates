@@ -1,7 +1,6 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("libadwaita-1/adwaita.h");
-});
+const c = @cImport({ @cInclude("libadwaita-1/adwaita.h"); });
+const config = @import("config");
 
 const api = @import("api.zig");
 
@@ -28,6 +27,7 @@ fn activate() callconv(.C) void {
     c.gtk_window_set_title(@ptrCast(window), "Crates");
     c.gtk_window_set_default_size(@ptrCast(window), 800, 600);
     c.gtk_widget_set_size_request(window, 400, 300);
+    if (!config.stable) c.gtk_style_context_add_class(c.gtk_widget_get_style_context(window), "devel");
     
     var icon_res_err: [*c]c.GError = null;
     const icon_resource = c.g_resource_load("/home/lua/Projects/adwaita-test/zig-out/bin/resources.gresource", &icon_res_err) orelse {
@@ -62,7 +62,7 @@ fn activate() callconv(.C) void {
     
     search_entry = c.gtk_search_entry_new();
     c.gtk_search_entry_set_placeholder_text(@ptrCast(search_entry), "Search crates.io");
-    c.gtk_search_entry_set_search_delay(@ptrCast(search_entry), 1000); // TODO: Shorten?
+    c.gtk_search_entry_set_search_delay(@ptrCast(search_entry), 500); // TODO: Shorten? (1000)
     _ = c.g_signal_connect_data(search_entry, "search-changed", @ptrCast(&searchSubmit), null, null, 0);
     
     c.gtk_box_append(@ptrCast(search_box), search_entry);
@@ -86,16 +86,75 @@ fn activate() callconv(.C) void {
     c.gtk_window_set_focus(@ptrCast(window), null);
 }
 
+fn setNoQueryView() void {
+    const placeholder_label = c.gtk_label_new("No search query");
+    c.gtk_widget_set_hexpand(placeholder_label, 0);
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(placeholder_label), "title-4");
+    
+    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), placeholder_label);
+    // c.gtk_window_set_focus(@ptrCast(window), null);
+}
+
+fn setLoadingView() void {
+    const content = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
+    
+    const header = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
+    c.gtk_widget_set_halign(header, c.GTK_ALIGN_END);
+    c.gtk_widget_set_size_request(header, -1, 24);
+    c.gtk_widget_set_margin_bottom(header, 8);
+    c.gtk_widget_set_margin_start(header, 16);
+    c.gtk_widget_set_margin_end(header, 16);
+    
+    const navigation_buttons = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(navigation_buttons), "linked");
+    
+    const previous_page_button = c.gtk_button_new_from_icon_name("left-symbolic");
+    c.gtk_widget_set_tooltip_text(previous_page_button, "Previous Page");
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(previous_page_button), "circular");
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(previous_page_button), "flat");
+    c.gtk_box_append(@ptrCast(navigation_buttons), previous_page_button);
+    const next_page_button = c.gtk_button_new_from_icon_name("right-symbolic");
+    c.gtk_widget_set_tooltip_text(next_page_button, "Next Page");
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_button), "circular");
+    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_button), "flat");
+    c.gtk_box_append(@ptrCast(navigation_buttons), next_page_button);
+    
+    c.gtk_widget_set_sensitive(previous_page_button, 0);
+    c.gtk_widget_set_sensitive(next_page_button, 0);
+    
+    c.gtk_box_append(@ptrCast(header), navigation_buttons);
+    
+    // const fill = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
+    // const progress = c.gtk_progress_bar_new();
+    // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(progress), "osd");
+    // c.gtk_progress_bar_set_fraction(@ptrCast(progress), 0);
+    // c.gtk_box_append(@ptrCast(fill), progress);
+    
+    const fill = c.gtk_spinner_new();
+    c.gtk_spinner_start(@ptrCast(fill));
+    c.gtk_widget_set_valign(fill, c.GTK_ALIGN_CENTER);
+    c.gtk_widget_set_vexpand(fill, 1);
+    c.gtk_widget_set_margin_bottom(fill, 24);
+    
+    c.gtk_box_append(@ptrCast(content), header);
+    c.gtk_box_append(@ptrCast(content), fill);
+    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), content);
+}
+
 var current_page: usize = 1;
 
 fn pageNext() callconv(.C) void {
     current_page += 1;
     searchSubmitKeepingPage(@ptrCast(search_entry));
+    c.gtk_window_set_focus(@ptrCast(window), null); // ???
+    // c.gtk_widget_set_can_focus(search_entry, 0);
 }
 
 fn pagePrev() callconv(.C) void {
     current_page -= 1;
     searchSubmitKeepingPage(@ptrCast(search_entry));
+    c.gtk_window_set_focus(@ptrCast(window), null); // ???
+    // c.gtk_widget_set_can_focus(search_entry, 0);
 }
 
 fn searchSubmit(self: *c.GtkSearchEntry) callconv(.C) void {
@@ -116,19 +175,15 @@ fn searchSubmitKeepingPage(self: *c.GtkSearchEntry) callconv(.C) void {
 
 fn searchSubmitAsync(query: []const u8) void {
     if (query.len == 0) {
-        const placeholder_label = c.gtk_label_new("No search query");
-        c.gtk_widget_set_hexpand(placeholder_label, 0);
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(placeholder_label), "title-4");
-        
-        c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), placeholder_label);
-        // c.gtk_window_set_focus(@ptrCast(window), null);
+        setNoQueryView();
         return;
     }
-    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), null);
+    setLoadingView();
     
     const copy = std.heap.c_allocator.alloc(u8, query.len) catch unreachable;
     std.mem.copyForwards(u8, copy, query);
     const task = std.Thread.spawn(.{}, threadTask, .{ copy }) catch unreachable;
+    
     task.detach();
 }
 
@@ -299,7 +354,7 @@ fn searchSubmitReal(response: []const u8) void {
     c.gtk_scrolled_window_set_child(@ptrCast(list_scroll_container), list);
     c.gtk_box_append(@ptrCast(content), list_scroll_container);
     c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), content);
-    c.gtk_window_set_focus(@ptrCast(window), null);
+    // c.gtk_window_set_focus(@ptrCast(window), null);
 }
 
 fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
