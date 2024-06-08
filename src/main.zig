@@ -54,12 +54,14 @@ fn activate() callconv(.C) void {
     if (!config.stable) c.gtk_style_context_add_class(c.gtk_widget_get_style_context(window), "devel");
     
     var icon_res_err: [*c]c.GError = null;
-    const icon_resource = c.g_resource_load("/home/lua/Projects/adwaita-test/zig-out/bin/resources.gresource", &icon_res_err) orelse {
-        std.debug.panic("{s}", .{ icon_res_err.*.message });
-    };
-    c.g_resources_register(icon_resource);
-    const icon_theme = c.gtk_icon_theme_get_for_display(c.gdk_display_get_default());
-    c.gtk_icon_theme_add_resource_path(icon_theme, "/com/github/teampuzel/icons");
+    const icon_resource = c.g_resource_load("./resources.gresource", &icon_res_err);
+    if (icon_resource) |res| {
+        c.g_resources_register(res);
+        const icon_theme = c.gtk_icon_theme_get_for_display(c.gdk_display_get_default());
+        c.gtk_icon_theme_add_resource_path(icon_theme, "/com/github/teampuzel/icons");
+    } else {
+        std.log.err("{s}", .{ icon_res_err.*.message });
+    }
     
     // Actions
     
@@ -221,6 +223,7 @@ fn searchSubmitAsync(query: []const u8) void {
 }
 
 var response_buf: []u8 = undefined; // The void pointer was somehow corrupting this data.
+var response_buf_mutex = std.Thread.Mutex {};
 
 fn threadTask(query: []const u8) void {
     const response = api.get(query, current_page, std.heap.c_allocator)
@@ -229,14 +232,19 @@ fn threadTask(query: []const u8) void {
         return;
     };
     
+    response_buf_mutex.lock();
     response_buf = response;
+    response_buf_mutex.unlock();
+    
     std.heap.c_allocator.free(query);
     c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadComplete, null, null);
 }
 
 fn threadComplete(_: ?*anyopaque) callconv(.C) c_int {
+    response_buf_mutex.lock();
     searchSubmitReal(response_buf);
     std.heap.c_allocator.free(response_buf);
+    response_buf_mutex.unlock();
     return c.G_SOURCE_REMOVE;
 }
 

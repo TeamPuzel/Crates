@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const dev_install = b.option(bool, "dev-install", "Install icons and the desktop file") orelse false;
+    const dev_install = b.option(bool, "dev-install", "Install the icon and desktop file") orelse false;
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
     const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
     const version = b.option([]const u8, "version", "Manually specify a value") orelse "0.0.0";
@@ -37,6 +37,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
     
     const run_cmd = b.addRunArtifact(exe);
+    run_cmd.setCwd(b.path("zig-out/bin"));
     run_cmd.step.dependOn(b.getInstallStep());
     
     if (b.args) |args| {
