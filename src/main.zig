@@ -104,25 +104,17 @@ fn searchSubmit(self: *c.GtkSearchEntry) callconv(.C) void {
     const query = c.gtk_editable_get_text(@ptrCast(self));
     const slice = std.mem.span(query);
     
-    searchSubmitReal(slice);
+    searchSubmitAsync(slice);
 }
 
 fn searchSubmitKeepingPage(self: *c.GtkSearchEntry) callconv(.C) void {
     const query = c.gtk_editable_get_text(@ptrCast(self));
     const slice = std.mem.span(query);
     
-    searchSubmitReal(slice);
+    searchSubmitAsync(slice);
 }
 
-/// The allocator for list data. It is located outside the function to extend the lifetime of the model.
-var list_arena: ?std.heap.ArenaAllocator = null;
-
-fn searchSubmitReal(query: []const u8) void {
-    if (list_arena != null) list_arena.?.deinit();
-    list_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    
-    const arena = list_arena.?.allocator();
-    
+fn searchSubmitAsync(query: []const u8) void {
     if (query.len == 0) {
         const placeholder_label = c.gtk_label_new("No search query");
         c.gtk_widget_set_hexpand(placeholder_label, 0);
@@ -132,9 +124,37 @@ fn searchSubmitReal(query: []const u8) void {
         // c.gtk_window_set_focus(@ptrCast(window), null);
         return;
     }
+    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), null);
     
+    const copy = std.heap.c_allocator.alloc(u8, query.len) catch unreachable;
+    std.mem.copyForwards(u8, copy, query);
+    const task = std.Thread.spawn(.{}, threadTask, .{ copy }) catch unreachable;
+    task.detach();
+}
+
+var response_buf: []u8 = undefined; // The void pointer was somehow corrupting this data.
+
+fn threadTask(query: []const u8) void {
     const response = api.get(query, current_page, std.heap.c_allocator) catch |err| std.debug.panic("{!}", .{ err });
-    defer std.heap.c_allocator.free(response);
+    response_buf = response;
+    std.heap.c_allocator.free(query);
+    c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadComplete, null, null);
+}
+
+fn threadComplete(_: ?*anyopaque) callconv(.C) c_int {
+    searchSubmitReal(response_buf);
+    std.heap.c_allocator.free(response_buf);
+    return c.G_SOURCE_REMOVE;
+}
+
+/// The allocator for list data. It is located outside the function to extend the lifetime of the model.
+var list_arena: ?std.heap.ArenaAllocator = null;
+
+fn searchSubmitReal(response: []const u8) void {
+    if (list_arena != null) list_arena.?.deinit();
+    list_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    
+    const arena = list_arena.?.allocator();
     
     const parsed = std.json.parseFromSliceLeaky(api.Search, arena, response, .{ .ignore_unknown_fields = true }) catch unreachable;
     
@@ -268,7 +288,7 @@ fn searchSubmitReal(query: []const u8) void {
         const next_page_final_button = c.gtk_button_new_with_label("Next Page");
         c.gtk_widget_set_hexpand(next_page_final_button, 1);
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "pill");
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "suggested-action");
+        // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "suggested-action");
         _ = c.g_signal_connect_data(next_page_final_button, "clicked", pageNext, null, null, 0);
         c.gtk_box_append(@ptrCast(final_buttons), next_page_final_button);
     }
