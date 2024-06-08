@@ -10,13 +10,24 @@ finish-args:
   - --socket=fallback-x11
   - --share=network
 
-# TODO: Complete the asahi fork of the Zig compiler
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm18
+
+build-options:
+  append-path: /usr/lib/sdk/llvm18/bin,
+  prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
+
 modules:
   - name: crates
     buildsystem: simple
     build-commands:
+      - TODO # TODO
       - zig build -Dstable -Doptimize=ReleaseSafe
     sources:
+      - type: git
+        url: https://github.com/TeamPuzel/zig.git
+        branch: master
+        dest: 
       - type: git
         url: https://github.com/TeamPuzel/Crates.git
         tag: 1.0.0 stable

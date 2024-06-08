@@ -7,6 +7,26 @@ const api = @import("api.zig");
 pub const version = "1.0.0";
 pub const version_string = if (config.stable) version else std.fmt.comptimePrint("{s} dev {d}", .{ version, config.build_id });
 
+pub const std_options = std.Options {
+    .side_channels_mitigations = .none,
+    .logFn = gtkLog
+};
+
+fn gtkLog(comptime message_level: std.log.Level, comptime _: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
+    const msg = std.fmt.allocPrintZ(std.heap.c_allocator, fmt, args) catch return;
+    defer std.heap.c_allocator.free(msg);
+    c.g_log(
+        null,
+        switch (message_level) {
+            .debug => c.G_LOG_LEVEL_DEBUG,
+            .info => c.G_LOG_LEVEL_INFO,
+            .warn => c.G_LOG_LEVEL_WARNING,
+            .err => c.G_LOG_LEVEL_CRITICAL
+        },
+        msg
+    );
+}
+
 var app: *anyopaque = undefined;
 var window: *c.GtkWidget = undefined;
 var toolbar_view: *c.GtkWidget = undefined;
@@ -67,6 +87,7 @@ fn activate() callconv(.C) void {
     c.gtk_search_entry_set_placeholder_text(@ptrCast(search_entry), "Search crates.io");
     c.gtk_search_entry_set_search_delay(@ptrCast(search_entry), 500); // TODO: Shorten? (1000)
     _ = c.g_signal_connect_data(search_entry, "search-changed", @ptrCast(&searchSubmit), null, null, 0);
+    _ = c.g_signal_connect_data(search_entry, "activate", @ptrCast(&searchSubmit), null, null, 0);
     
     c.gtk_box_append(@ptrCast(search_box), search_entry);
     c.gtk_box_append(@ptrCast(search_box), source_button);
