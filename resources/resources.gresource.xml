@@ -11,5 +11,6 @@
     <file preprocess="xml-stripblanks">right-symbolic.svg</file>
     <file preprocess="xml-stripblanks">open-book-symbolic.svg</file>
     <file preprocess="xml-stripblanks">external-link-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">offline-globe-symbolic.svg</file>
   </gresource>
 </gresources>

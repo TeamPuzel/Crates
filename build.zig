@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibC();
     exe.linkSystemLibrary("libadwaita-1");
-    exe.linkSystemLibrary("libcurl");
     
     const options = b.addOptions();
     options.addOption(bool, "stable", stable);

@@ -89,6 +89,14 @@ fn activate() callconv(.C) void {
     c.gtk_window_set_focus(@ptrCast(window), null);
 }
 
+fn setFailureView() void {
+    const status_page = c.adw_status_page_new();
+    c.adw_status_page_set_icon_name(@ptrCast(status_page), "offline-globe-symbolic");
+    c.adw_status_page_set_title(@ptrCast(status_page), "Network error");
+    c.adw_status_page_set_description(@ptrCast(status_page), "Check your connection and try again");
+    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), status_page);
+}
+
 fn setNoQueryView() void {
     const placeholder_label = c.gtk_label_new("No search query");
     c.gtk_widget_set_hexpand(placeholder_label, 0);
@@ -193,7 +201,12 @@ fn searchSubmitAsync(query: []const u8) void {
 var response_buf: []u8 = undefined; // The void pointer was somehow corrupting this data.
 
 fn threadTask(query: []const u8) void {
-    const response = api.get(query, current_page, std.heap.c_allocator) catch |err| std.debug.panic("{!}", .{ err });
+    const response = api.get(query, current_page, std.heap.c_allocator)
+    catch {
+        c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadFailure, null, null);
+        return;
+    };
+    
     response_buf = response;
     std.heap.c_allocator.free(query);
     c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadComplete, null, null);
@@ -202,6 +215,11 @@ fn threadTask(query: []const u8) void {
 fn threadComplete(_: ?*anyopaque) callconv(.C) c_int {
     searchSubmitReal(response_buf);
     std.heap.c_allocator.free(response_buf);
+    return c.G_SOURCE_REMOVE;
+}
+
+fn threadFailure(_: ?*anyopaque) callconv(.C) c_int {
+    setFailureView();
     return c.G_SOURCE_REMOVE;
 }
 

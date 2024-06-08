@@ -1,7 +1,4 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("curl/curl.h");
-});
 
 pub const per_page = 50;
 
@@ -25,28 +22,28 @@ pub const Crate = struct {
     description: [:0]const u8
 };
 
-var response_buf = std.ArrayList(u8).init(std.heap.c_allocator);
-
-fn writeFunction(data: [*c]u8, size: usize, nmemb: usize, _: *anyopaque) callconv(.C) usize {
-    for (0..size * nmemb) |i| response_buf.append(data[i]) catch |err| std.debug.panic("{!}", .{ err });
-    return size * nmemb;
-}
-
 pub fn get(query: []const u8, page: usize, alloc: std.mem.Allocator) ![]u8 { 
-    const curl = c.curl_easy_init() orelse return error.CurlInit;
-    defer c.curl_easy_cleanup(curl);
+    var client = std.http.Client { .allocator = alloc };
+    defer client.deinit();
     
-    const url = try std.fmt.allocPrintZ(std.heap.c_allocator, std.fmt.comptimePrint("https://crates.io/api/v1/crates?per_page={d}", .{ per_page }) ++ "&q={s}&page={d}", .{ query, page });
+    const url = try std.fmt.allocPrintZ(
+        alloc,
+        std.fmt.comptimePrint("https://crates.io/api/v1/crates?per_page={d}", .{ per_page })
+        ++ "&q={s}&page={d}",
+        .{ query, page }
+    );
     defer std.heap.c_allocator.free(url);
     
-    _ = c.curl_easy_setopt(curl, c.CURLOPT_URL, url.ptr);
-    _ = c.curl_easy_setopt(curl, c.CURLOPT_USERAGENT, "com.github.TeamPuzel.Crates/1.0.0");
-    _ = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, &writeFunction);
+    var response = std.ArrayList(u8).init(alloc);
     
-    _ = c.curl_easy_perform(curl);
+    _ = try client.fetch(.{
+        .location = .{ .url = url },
+        .method = .GET,
+        .headers = .{
+            .user_agent = .{ .override = "com.github.TeamPuzel.Crates/" ++ @import("root").version_string }
+        },
+        .response_storage = .{ .dynamic = &response }
+    });
     
-    const ret = try alloc.alloc(u8, response_buf.items.len);
-    std.mem.copyForwards(u8, ret, response_buf.items);
-    response_buf.clearRetainingCapacity();
-    return ret;
+    return response.items;
 }
