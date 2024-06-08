@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const dev_install = b.option(bool, "dev-install", "Install icons and the desktop file") orelse false;
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
+    const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
     
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -19,6 +20,7 @@ pub fn build(b: *std.Build) void {
     
     const options = b.addOptions();
     options.addOption(bool, "stable", stable);
+    options.addOption(u16, "build_id", build_id);
     exe.root_module.addOptions("config", options);
     
     _ = b.run(&.{ "sh", "-c", "cd resources; glib-compile-resources resources.gresource.xml" });

@@ -4,6 +4,9 @@ const config = @import("config");
 
 const api = @import("api.zig");
 
+pub const version = "1.0.0";
+pub const version_string = if (config.stable) version else std.fmt.comptimePrint("{s} dev {d}", .{ version, config.build_id });
+
 var app: *anyopaque = undefined;
 var window: *c.GtkWidget = undefined;
 var toolbar_view: *c.GtkWidget = undefined;
@@ -375,7 +378,7 @@ fn about() callconv(.C) void {
         "application-name", "Crates",
         "developer-name", "TeamPuzel (Lua)",
         "application-icon", "com.github.TeamPuzel.Crates",
-        "version", "1.0.0",
+        "version", version_string,
         "copyright", "© 2024 TeamPuzel (Lua)",
         "issue-url", "https://github.com/TeamPuzel/Crates/issues/new",
         "website", "https://github.com/TeamPuzel/Crates",
