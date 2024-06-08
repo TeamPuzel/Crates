@@ -17,18 +17,30 @@ build-options:
   append-path: /usr/lib/sdk/llvm18/bin,
   prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
 
+cleanup:
+  - src
+
 modules:
   - name: crates
     buildsystem: simple
     build-commands:
-      - TODO # TODO
-      - zig build -Dstable -Doptimize=ReleaseSafe
+      # Custom Zig
+      - cd src/zig
+      - mkdir build
+      - cd build
+      - cmake ..
+      - make install
+      # TODO: Copy the lib folder to the install directory
+      - cd ../../..
+      # Application
+      - zig build -Dversion="1.0.0" -Dstable -Doptimize=ReleaseSmall
     sources:
       - type: git
         url: https://github.com/TeamPuzel/zig.git
         branch: master
-        dest: 
+        dest: src/zig
       - type: git
         url: https://github.com/TeamPuzel/Crates.git
-        tag: 1.0.0 stable
-        dest: 'src/crates'
+        # tag: 1.0.0 stable
+        branch: main
+        dest: src/crates

@@ -4,8 +4,9 @@ const config = @import("config");
 
 const api = @import("api.zig");
 
-pub const version = "1.0.0";
-pub const version_string = if (config.stable) version else std.fmt.comptimePrint("{s} dev {d}", .{ version, config.build_id });
+pub const version_string = if (config.stable)
+    std.fmt.comptimePrint("{s}", .{ config.version })
+    else std.fmt.comptimePrint("{s} dev {d}", .{ config.version, config.build_id });
 
 pub const std_options = std.Options {
     .side_channels_mitigations = .none,
@@ -412,20 +413,21 @@ fn about() callconv(.C) void {
         &"TeamPuzel (Lua)".*
     };
     
-    c.adw_show_about_window(
-        @ptrCast(window),
-        "application-name", "Crates",
-        "developer-name", "TeamPuzel (Lua)",
-        "application-icon", "com.github.TeamPuzel.Crates",
-        "version", version_string,
-        "copyright", "© 2024 TeamPuzel (Lua)",
-        "issue-url", "https://github.com/TeamPuzel/Crates/issues/new",
-        "website", "https://github.com/TeamPuzel/Crates",
-        "license-type", c.GTK_LICENSE_GPL_3_0,
-        "developers", &developers,
-        "designers", &designers,
-        c.NULL
-    );
+    const about_window = c.adw_about_dialog_new();
+    c.adw_about_dialog_set_application_name(@ptrCast(about_window), "Crates");
+    c.adw_about_dialog_set_application_icon(@ptrCast(about_window), "com.github.TeamPuzel.Crates");
+    c.adw_about_dialog_set_developer_name(@ptrCast(about_window), "TeamPuzel (Lua)");
+    c.adw_about_dialog_set_version(@ptrCast(about_window), version_string);
+    c.adw_about_dialog_set_copyright(@ptrCast(about_window), "© 2024 TeamPuzel (Lua)");
+    c.adw_about_dialog_set_issue_url(@ptrCast(about_window), "https://github.com/TeamPuzel/Crates/issues/new");
+    c.adw_about_dialog_set_website(@ptrCast(about_window), "https://github.com/TeamPuzel/Crates");
+    c.adw_about_dialog_set_license_type(@ptrCast(about_window), c.GTK_LICENSE_GPL_3_0);
+    c.adw_about_dialog_set_developers(@ptrCast(about_window), @constCast(@ptrCast(&developers)));
+    c.adw_about_dialog_set_designers(@ptrCast(about_window), @constCast(@ptrCast(&designers)));
+    c.adw_about_dialog_set_comments(@ptrCast(about_window), "This project is not associated with or endorsed by the Rust Foundation");
+    c.adw_about_dialog_add_legal_section(@ptrCast(about_window), "Cargo logo", "© Rust Foundation", c.GTK_LICENSE_CUSTOM, "Licensed under CC-BY 4.0");
+    
+    c.adw_dialog_present(@ptrCast(about_window), window);
 }
 
 fn shortcuts() callconv(.C) void {
