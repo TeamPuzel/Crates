@@ -3,6 +3,11 @@ const std = @import("std");
 const suggested_version = "0.2.0";
 const id = "com.github.TeamPuzel.Crates";
 
+const bundle_targets: []const std.Target.Query = &.{
+    std.Target.Query { .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
+    std.Target.Query { .cpu_arch = .x86_64,  .os_tag = .linux, .abi = .gnu }
+};
+
 pub fn build(b: *std.Build) !void {
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
     const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
@@ -59,11 +64,11 @@ pub fn build(b: *std.Build) !void {
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
     if (!target.query.isNative()) {
         if (target.result.cpu.arch == .x86_64) {
-            exe.addLibraryPath(b.path("cross/x86_64/merged/usr/lib64"));
-            exe.addIncludePath(b.path("cross/x86_64/merged/usr/include"));
+            exe.addLibraryPath(b.path("cross/x86_64/usr/lib64"));
+            exe.addIncludePath(b.path("cross/x86_64/usr/include"));
         } else if (target.result.cpu.arch == .aarch64) {
-            exe.addLibraryPath(b.path("cross/aarch64/merged/usr/lib64"));
-            exe.addIncludePath(b.path("cross/aarch64/merged/usr/include"));
+            exe.addLibraryPath(b.path("cross/aarch64/usr/lib64"));
+            exe.addIncludePath(b.path("cross/aarch64/usr/include"));
         }
     }
     
@@ -100,25 +105,56 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_exe_unit_tests.step);
     
     // MARK: - Flatpak -------------------------------------------------------------------------------------------------
-    // TODO: aarch64 cross compilation
-    const x86_64 = b.addExecutable(.{
-        .name = "crates",
-        .root_source_file = b.path("src/main.zig"),
-        .target = b.resolveTargetQuery(try std.Build.parseTargetQuery(.{ .arch_os_abi = "x86_64-linux-gnu" })),
-        .optimize = .ReleaseSmall
-    });
-    x86_64.linkLibC();
-    x86_64.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
-    x86_64.addLibraryPath(b.path("cross/x86_64/merged/usr/lib64"));
-    x86_64.addIncludePath(b.path("cross/x86_64/merged/usr/include"));
-    x86_64.root_module.addOptions("config", options);
-    
-    const x86_64_artifact = b.addInstallArtifact(x86_64, .{ .dest_dir = .{ .override = .{ .custom = "x86_64" } } });
     
     const bundle_step = b.step("bundle", "Generate a bundle and flatpak manifest for a GitHub release");
-    bundle_step.dependOn(&x86_64_artifact.step);
-    bundle_step.dependOn(&resource_install_step.step);
-    // const x86_64_compress = b.addSystemCommand(&.{ "tar" });
+    
+    for (bundle_targets) |bundle_target| {
+        const bundle_exe = b.addExecutable(.{
+            .name = "crates",
+            .root_source_file = b.path("src/main.zig"),
+            .target = b.resolveTargetQuery(bundle_target),
+            .optimize = .ReleaseSmall
+        });
+        bundle_exe.linkLibC();
+        bundle_exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
+        bundle_exe.addLibraryPath(b.path(
+            try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/lib64", .{ @tagName(bundle_target.cpu_arch.?) })
+        ));
+        bundle_exe.addIncludePath(b.path(
+            try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/include", .{ @tagName(bundle_target.cpu_arch.?) })
+        ));
+        bundle_exe.root_module.addOptions("config", options);
+        
+        const artifact = b.addInstallArtifact(bundle_exe, .{ .dest_dir = .{
+            .override = .{ .custom = @tagName(bundle_target.cpu_arch.?) }
+        } });
+        
+        const archive_dir = b.addWriteFiles();
+        _ = archive_dir.addCopyFile(artifact.emitted_bin.?, "crates");
+        // _ = archive_dir.addCopyFile(source: std.Build.LazyPath, sub_path: []const u8) // Resources
+        
+        const compress_step = b.addSystemCommand(&.{
+            "sh", "-c",
+            try std.fmt.allocPrint(
+                b.allocator,
+                "tar cfJ crates-{s}.tar.xz *",
+                .{ artifact.dest_dir.?.custom }
+            )
+        });
+        compress_step.step.dependOn(&archive_dir.step);
+        compress_step.setCwd(archive_dir.getDirectory());
+        
+        const archive_name = try std.fmt.allocPrint(b.allocator, "crates-{s}.tar.xz", .{ @tagName(bundle_target.cpu_arch.?) });
+        
+        const install_step = b.addInstallFile(
+            archive_dir.getDirectory().path(b, archive_name),
+            archive_name
+        );
+        install_step.step.dependOn(&compress_step.step);
+        install_step.dir = .{ .custom = "bundle" };
+        
+        bundle_step.dependOn(&install_step.step);
+    }
     
     // const metainfo_install_step = b.addWriteFile(id ++ ".metainfo.xml", try generateMetaInfoForRelease(b));
     // TODO: This step depends on the sha256 of the bundle and needs to be completed last.

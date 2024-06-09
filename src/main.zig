@@ -53,7 +53,8 @@ pub fn main() !void {
             return;
         }
         if (std.mem.eql(u8, arg, "--install") or std.mem.eql(u8, arg, "-i")) {
-            
+            _ = try std.io.getStdOut().write("Automatic installation not yet implemented." ++ "\n");
+            return;
         }
     }
     
@@ -461,7 +462,7 @@ fn about() callconv(.C) void {
     c.adw_about_dialog_set_developers(@ptrCast(about_window), @constCast(@ptrCast(&developers)));
     c.adw_about_dialog_set_designers(@ptrCast(about_window), @constCast(@ptrCast(&designers)));
     c.adw_about_dialog_set_comments(@ptrCast(about_window), "This project is not associated with or endorsed by the Rust Foundation");
-    c.adw_about_dialog_add_legal_section(@ptrCast(about_window), "Cargo logo", "© Rust Foundation", c.GTK_LICENSE_CUSTOM, "Licensed under CC-BY 4.0");
+    c.adw_about_dialog_add_legal_section(@ptrCast(about_window), "Rust logo", "© Rust Foundation", c.GTK_LICENSE_CUSTOM, "Licensed under CC-BY 4.0");
     
     c.adw_dialog_present(@ptrCast(about_window), window);
 }
