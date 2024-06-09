@@ -18,6 +18,20 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
     
+    // When cross compiling architecture specific libraries are needed.
+    // While surprisingly no distribution I use allows conveniently downloading those, it is fairly easy
+    // to do so using a container (if a bit wasteful).
+    // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
+    if (!target.query.isNative()) {
+        if (target.result.cpu.arch == .x86_64) {
+            exe.addLibraryPath(b.path("cross/x86_64/merged/usr/lib64"));
+            exe.addIncludePath(b.path("cross/x86_64/merged/usr/include"));
+        } else if (target.result.cpu.arch == .aarch64) {
+            exe.addLibraryPath(b.path("cross/aarch64/merged/usr/lib64"));
+            exe.addIncludePath(b.path("cross/aarch64/merged/usr/include"));
+        }
+    }
+    
     const options = b.addOptions();
     options.addOption(bool, "stable", stable);
     options.addOption(u16, "build_id", build_id);
