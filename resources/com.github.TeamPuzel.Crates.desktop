@@ -1,7 +1,0 @@
-[Desktop Entry]
-Name=Crates
-Icon=com.github.TeamPuzel.Crates
-Keywords=rust;crate;package;
-Terminal=false
-Type=Application
-Exec=crates
