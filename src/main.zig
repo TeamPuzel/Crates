@@ -102,15 +102,20 @@ fn activate() callconv(.C) void {
     c.adw_header_bar_pack_end(@ptrCast(header), main_menu_button);
     c.adw_toolbar_view_add_top_bar(@ptrCast(toolbar_view), header);
     
-    const placeholder_label = c.gtk_label_new("No search query");
-    c.gtk_widget_set_hexpand(placeholder_label, 0);
-    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(placeholder_label), "title-4");
-    
-    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), placeholder_label);
+    setEmptyView();
     
     c.adw_application_window_set_content(@ptrCast(window), toolbar_view);
     c.gtk_window_present(@ptrCast(window));
     c.gtk_window_set_focus(@ptrCast(window), null);
+}
+
+fn setEmptyView() void {
+    const status_page = c.adw_status_page_new();
+    // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(status_page), "compact");
+    c.adw_status_page_set_icon_name(@ptrCast(status_page), "com.github.TeamPuzel.Crates");
+    c.adw_status_page_set_title(@ptrCast(status_page), "No search query");
+    c.adw_status_page_set_description(@ptrCast(status_page), "Find crates from crates.io and custom sources");
+    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), status_page);
 }
 
 fn setFailureView() void {
@@ -210,7 +215,7 @@ fn searchSubmitKeepingPage(self: *c.GtkSearchEntry) callconv(.C) void {
 
 fn searchSubmitAsync(query: []const u8) void {
     if (query.len == 0) {
-        setNoQueryView();
+        setEmptyView();
         return;
     }
     setLoadingView();

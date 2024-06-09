@@ -13,12 +13,16 @@ finish-args:
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.llvm18
 
+build-options:
+  append-path: /usr/lib/sdk/llvm18/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm18/lib
+
 modules:
   - name: crates
     buildsystem: simple
     build-commands:
       # Custom Zig
-      - cd src/zig; mkdir build; cd build; cmake .. -DCMAKE_PREFIX_PATH="/usr/lib/sdk/llvm18;/usr/lib/sdk/llvm18/lib"; make install
+      - cd src/zig; mkdir build; cd build; cmake .. -DZIG_DYNAMIC_LLVM=ON -DCMAKE_PREFIX_PATH="/usr/lib/sdk/llvm18;/usr/lib/sdk/llvm18/lib"; make install
       # TODO: Copy the lib folder to the install directory
       # Application
       # TODO: Use the correct path to the built zig

@@ -47,3 +47,11 @@ pub fn get(query: []const u8, page: usize, alloc: std.mem.Allocator) ![]u8 {
     
     return response.items;
 }
+
+// pub fn hasReadme(repo: []const u8) !bool {
+    
+// }
+
+// pub fn getReadme(repo: []const u8) ![]const u8 {
+    
+// }
