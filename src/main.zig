@@ -34,6 +34,29 @@ var toolbar_view: *c.GtkWidget = undefined;
 var search_entry: *c.GtkWidget = undefined;
 
 pub fn main() !void {
+    var args = std.process.args();
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            _ = try std.io.getStdOut().write(
+                \\ Usage: crates [OPTION]...
+                \\ A minimal GNOME application for browsing Rust crates. 
+                \\
+                \\ -h, --help                  Output this message and exit
+                \\ -i, --install               Install the program, icon and desktop files
+                \\     --version               Output the version string and exit
+                \\
+            );
+            return;
+        }
+        if (std.mem.eql(u8, arg, "--version")) {
+            _ = try std.io.getStdOut().write(version_string ++ "\n");
+            return;
+        }
+        if (std.mem.eql(u8, arg, "--install") or std.mem.eql(u8, arg, "-i")) {
+            
+        }
+    }
+    
     app = c.g_object_new(
         c.adw_application_get_type(),
         "application-id", "com.github.TeamPuzel.Crates",

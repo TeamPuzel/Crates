@@ -1,10 +1,12 @@
 const std = @import("std");
 
+const suggested_version = "0.1.1";
+
 pub fn build(b: *std.Build) void {
     const dev_install = b.option(bool, "dev-install", "Install the icon and desktop file") orelse false;
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
     const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
-    const version = b.option([]const u8, "version", "Manually specify a value") orelse "0.0.0";
+    const version = b.option([]const u8, "version", "Manually specify a value") orelse suggested_version;
     
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
