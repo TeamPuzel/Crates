@@ -66,7 +66,7 @@ pub fn main() !void {
     
     _ = c.g_signal_connect_data(@ptrCast(app), "activate", activate, null, null, 0);
     
-    _ = c.g_application_run(@alignCast(@ptrCast(app)), @intCast(std.os.argv.len), @ptrCast(std.os.argv.ptr));
+    _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
 }
 
 fn activate() callconv(.C) void {
