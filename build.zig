@@ -277,21 +277,21 @@ fn generateFlatpakManifestForRelease(b: *std.Build) ![]const u8 {
         \\command: crates
         \\
         \\finish-args:
-        \\- --socket=wayland
-        \\- --share=ipc
-        \\- --socket=fallback-x11
-        \\- --share=network
+        \\  - --socket=wayland
+        \\  - --share=ipc
+        \\  - --socket=fallback-x11
+        \\  - --share=network
         \\
         \\modules:
-        \\- name: crates
+        \\  - name: crates
         \\    buildsystem: simple
         \\    build-commands:
-        \\    - tar -xf ./crates.tar.xz
-        \\    - install -Dm644 ${{FLATPAK_ID}}.metainfo.xml ${{FLATPAK_DEST}}/share/metainfo/${{FLATPAK_ID}}.metainfo.xml
-        \\    - install -Dm644 ${{FLATPAK_ID}}.svg ${{FLATPAK_DEST}}/share/icons/hicolor/scalable/apps/${{FLATPAK_ID}}.svg
-        \\    - install -Dm644 ${{FLATPAK_ID}}.desktop ${{FLATPAK_DEST}}/share/applications/${{FLATPAK_ID}}.desktop
-        \\    - install -Dm644 resources.gresource ${{FLATPAK_DEST}}/bin/resources.gresource
-        \\    - install -Dm755 crates ${{FLATPAK_DEST}}/bin/crates
+        \\      - tar -xf ./crates.tar.xz
+        \\      - install -Dm644 ${{FLATPAK_ID}}.metainfo.xml ${{FLATPAK_DEST}}/share/metainfo/${{FLATPAK_ID}}.metainfo.xml
+        \\      - install -Dm644 ${{FLATPAK_ID}}.svg ${{FLATPAK_DEST}}/share/icons/hicolor/scalable/apps/${{FLATPAK_ID}}.svg
+        \\      - install -Dm644 ${{FLATPAK_ID}}.desktop ${{FLATPAK_DEST}}/share/applications/${{FLATPAK_ID}}.desktop
+        \\      - install -Dm644 resources.gresource ${{FLATPAK_DEST}}/bin/resources.gresource
+        \\      - install -Dm755 crates ${{FLATPAK_DEST}}/bin/crates
         \\    sources:
         \\
         ,
@@ -307,12 +307,12 @@ fn generateFlatpakManifestSourceForRelease(
 ) ![]const u8 {
     return try std.fmt.allocPrint(
         b.allocator,
-        \\    - type: file
+        \\      - type: file
         \\        dest-filename: crates.tar.xz
         \\        url: https://github.com/TeamPuzel/Crates/releases/download/{s}/crates-{s}.tar.xz
         \\        sha256: {s}
         \\        only-arches:
-        \\        - {s}
+        \\          - {s}
         \\
         ,
         .{ version, arch, sha256, arch }
