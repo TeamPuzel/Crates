@@ -24,6 +24,6 @@ The most important one is `-Dstable` which will configure the window to use the 
 appearance instead of the development window and remove all references to it being a dev build.
 It should only be used for stable releases of the application.
 
-![image](https://github.com/TeamPuzel/Crates/assets/94306330/4a2bb43e-1dd2-4fbe-be94-41dff84d3983)
+![Screenshot from 2024-06-10 17-07-08](https://github.com/TeamPuzel/Crates/assets/94306330/35086337-6524-4708-b6db-78506baf197e)
 
-![image](https://github.com/TeamPuzel/Crates/assets/94306330/db274838-187f-457a-86b2-ae8d436fef15)
+![Screenshot from 2024-06-10 17-07-39](https://github.com/TeamPuzel/Crates/assets/94306330/5d388d95-9e47-45a2-bcc7-51a9fe062e9e)
