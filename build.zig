@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const suggested_version = "0.2.0";
+const suggested_version = "0.3.0";
 const id = "com.github.TeamPuzel.Crates";
 
 const bundle_targets: []const std.Target.Query = &.{
@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
     const resource_install_step = b.addInstallFile(b.path("resources/cargo.svg"), id ++ ".svg");
     resource_install_step.dir = .bin;
     
-    const desktop_file_write_step = b.addWriteFile(id ++ ".desktop", try generateDesktopFileForRelease(b, version));
+    const desktop_file_write_step = b.addWriteFile(id ++ ".desktop", try generateDesktopFileForRelease(b));
     const desktop_file_install_step = b.addInstallFile(desktop_file_write_step.getDirectory().path(b, id ++ ".desktop"), id ++ ".desktop");
     desktop_file_install_step.step.dependOn(&desktop_file_write_step.step);
     desktop_file_install_step.dir = .bin;
@@ -62,14 +62,12 @@ pub fn build(b: *std.Build) !void {
     // While surprisingly no distribution I use allows conveniently downloading those, it is fairly easy
     // to do so using a container (if a bit wasteful).
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
-    if (!target.query.isNative()) {
-        if (target.result.cpu.arch == .x86_64) {
-            exe.addLibraryPath(b.path("cross/x86_64/usr/lib64"));
-            exe.addIncludePath(b.path("cross/x86_64/usr/include"));
-        } else if (target.result.cpu.arch == .aarch64) {
-            exe.addLibraryPath(b.path("cross/aarch64/usr/lib64"));
-            exe.addIncludePath(b.path("cross/aarch64/usr/include"));
-        }
+    if (target.query.isNative()) {
+        exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
+        exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
+    } else {
+        exe.addLibraryPath(b.path(try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/lib64", .{ @tagName(target.result.cpu.arch) })));
+        exe.addIncludePath(b.path(try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/include", .{ @tagName(target.result.cpu.arch) })));
     }
     
     exe.root_module.addOptions("config", options);
@@ -106,7 +104,11 @@ pub fn build(b: *std.Build) !void {
     
     // MARK: - Flatpak -------------------------------------------------------------------------------------------------
     
-    var manifest = b.addWriteFile(id ++ ".yml", try generateFlatpakManifestForRelease(b));
+    const manifest_dir = b.makeTempPath();
+    const manifest_file = try std.fs.createFileAbsolute(try std.fmt.allocPrint(b.allocator, "{s}/" ++ id ++ ".yml", .{ manifest_dir }), .{});
+    try manifest_file.writeAll(try generateFlatpakManifestForRelease(b));
+    
+    // var manifest = b.addWriteFile(id ++ ".yml", try generateFlatpakManifestForRelease(b));
     var manifest_steps = std.ArrayList(*ManifestSourceDerive).init(b.allocator);
     
     const bundle_step = b.step("bundle", "Generate a bundle and flatpak manifest for a GitHub release");
@@ -128,14 +130,11 @@ pub fn build(b: *std.Build) !void {
         ));
         bundle_exe.root_module.addOptions("config", options);
         
-        const artifact = b.addInstallArtifact(bundle_exe, .{ .dest_dir = .{
-            .override = .{ .custom = @tagName(bundle_target.cpu_arch.?) }
-        } });
-        
         const archive_dir = b.addWriteFiles();
-        _ = archive_dir.addCopyFile(artifact.emitted_bin.?, "crates");
+        _ = archive_dir.step.dependOn(&bundle_exe.step);
+        _ = archive_dir.addCopyFile(bundle_exe.getEmittedBin(), "crates");
         _ = archive_dir.add(id ++ ".metainfo.xml", try generateMetaInfoForRelease(b));
-        _ = archive_dir.add(id ++ ".desktop", try generateDesktopFileForRelease(b, version));
+        _ = archive_dir.add(id ++ ".desktop", try generateDesktopFileForRelease(b));
         
         _ = archive_dir.addCopyFile(icon_step.getDirectory().path(b, "resources.gresource"), "resources.gresource");
         archive_dir.step.dependOn(&compile_icons_step.step);
@@ -161,14 +160,15 @@ pub fn build(b: *std.Build) !void {
                 .{ @tagName(bundle_target.cpu_arch.?) }
             )
         });
+        checksum_step.has_side_effects = true;
         checksum_step.step.dependOn(&compress_step.step);
         checksum_step.setCwd(archive_dir.getDirectory());
         const stdout = checksum_step.captureStdOut();
         const manifest_source_step = ManifestSourceDerive.init(
-            b, manifest.getDirectory().path(b, id ++ ".yml"), stdout, version, @tagName(bundle_target.cpu_arch.?)
+            b, manifest_file, stdout, version, @tagName(bundle_target.cpu_arch.?)
         );
         manifest_source_step.step.dependOn(&checksum_step.step);
-        manifest_source_step.step.dependOn(&manifest.step);
+        // manifest_source_step.step.dependOn(&manifest.step);
         try manifest_steps.append(manifest_source_step);
         
         const archive_name = try std.fmt.allocPrint(b.allocator, "crates-{s}.tar.xz", .{ @tagName(bundle_target.cpu_arch.?) });
@@ -183,7 +183,8 @@ pub fn build(b: *std.Build) !void {
         bundle_step.dependOn(&install_step.step);
     }
     
-    const install_manifest = b.addInstallFile(manifest.getDirectory().path(b, id ++ ".yml"), id ++ ".yml");
+    // const install_manifest = b.addInstallFile(manifest.getDirectory().path(b, id ++ ".yml"), id ++ ".yml");
+    const install_manifest = b.addInstallFile(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/" ++ id ++ ".yml", .{ manifest_dir }) }, id ++ ".yml");
     for (manifest_steps.items) |step| install_manifest.step.dependOn(&step.step);
     install_manifest.dir = .{ .custom = "bundle" };
     
@@ -194,12 +195,12 @@ const ManifestSourceDerive = struct {
     step: std.Build.Step,
     version: []const u8,
     arch: []const u8,
-    manifest: std.Build.LazyPath,
+    manifest: std.fs.File,
     sha256: std.Build.LazyPath,
 
     fn init(
         b: *std.Build,
-        manifest: std.Build.LazyPath,
+        manifest: std.fs.File,
         sha256: std.Build.LazyPath,
         version: []const u8,
         arch: []const u8
@@ -217,6 +218,8 @@ const ManifestSourceDerive = struct {
             .version = version,
             .arch = arch
         };
+        // manifest.addStepDependencies(&self.step);
+        sha256.addStepDependencies(&self.step);
         return self;
     }
     
@@ -226,8 +229,9 @@ const ManifestSourceDerive = struct {
         const sha_raw = try std.fs.openFileAbsolute(self.sha256.getPath(self.step.owner), .{});
         const sha = try sha_raw.readToEndAlloc(self.step.owner.allocator, std.math.maxInt(usize));
         
-        const man = try std.fs.openFileAbsolute(self.manifest.getPath(self.step.owner), .{ .lock = .exclusive, .mode = .read_write });
-        defer man.close();
+        // const man = try std.fs.openFileAbsolute(self.manifest.getPath(self.step.owner), .{ .lock = .exclusive, .mode = .write_only });
+        // defer man.close();
+        const man = self.manifest;
         
         try man.seekTo(try man.getEndPos());
         
@@ -281,6 +285,7 @@ fn generateFlatpakManifestForRelease(b: *std.Build) ![]const u8 {
         \\  - --share=ipc
         \\  - --socket=fallback-x11
         \\  - --share=network
+        \\  - --device=dri
         \\
         \\modules:
         \\  - name: crates
@@ -319,11 +324,11 @@ fn generateFlatpakManifestSourceForRelease(
     );
 }
 
-fn generateDesktopFileForRelease(b: *std.Build, version: []const u8) ![]const u8 {
+fn generateDesktopFileForRelease(b: *std.Build) ![]const u8 {
     return try std.fmt.allocPrint(
         b.allocator,
         \\[Desktop Entry]
-        \\Version={s}
+        \\Version=1.5
         \\Name=Crates
         \\Comment=A graphical search interface for Rust crates
         \\Categories=Development;GNOME;
@@ -333,7 +338,7 @@ fn generateDesktopFileForRelease(b: *std.Build, version: []const u8) ![]const u8
         \\Type=Application
         \\Exec=crates
         ,
-        .{ version, id }
+        .{ id }
     );
 }
 

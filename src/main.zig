@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @cImport({ @cInclude("libadwaita-1/adwaita.h"); });
+const c = @import("c.zig");
 const config = @import("config");
 
 const api = @import("api.zig");
@@ -70,22 +70,28 @@ pub fn main() !void {
     _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
 }
 
-fn activate() callconv(.C) void {
-    window = c.adw_application_window_new(@alignCast(@ptrCast(app)));
-    c.gtk_window_set_title(@ptrCast(window), "Crates");
-    c.gtk_window_set_default_size(@ptrCast(window), 800, 600);
-    c.gtk_widget_set_size_request(window, 400, 300);
-    if (!config.stable) c.gtk_style_context_add_class(c.gtk_widget_get_style_context(window), "devel");
-    
+fn registerResourceAt(path: [:0]const u8, silent: bool) error{GenericError}!void {
     var icon_res_err: [*c]c.GError = null;
-    const icon_resource = c.g_resource_load("./resources.gresource", &icon_res_err);
+    const icon_resource = c.g_resource_load(path, &icon_res_err);
     if (icon_resource) |res| {
         c.g_resources_register(res);
         const icon_theme = c.gtk_icon_theme_get_for_display(c.gdk_display_get_default());
         c.gtk_icon_theme_add_resource_path(icon_theme, "/com/github/teampuzel/icons");
     } else {
-        std.log.err("{s}", .{ icon_res_err.*.message });
+        if (!silent) std.log.err("{s}", .{ icon_res_err.*.message });
+        return error.GenericError;
     }
+}
+
+fn activate() callconv(.C) void {
+    window = c.adw_application_window_new(@alignCast(@ptrCast(app)));
+    c.gtk_window_set_title(@ptrCast(window), "Crates");
+    c.gtk_window_set_default_size(@ptrCast(window), 800, 600);
+    c.gtk_widget_set_size_request(window, 400, 500);
+    if (!config.stable) c.gtk_style_context_add_class(c.gtk_widget_get_style_context(window), "devel");
+    
+    registerResourceAt("/app/bin/resources.gresource", true)
+    catch registerResourceAt("./resources.gresource", false) catch {};
     
     // Actions
     
@@ -94,6 +100,11 @@ fn activate() callconv(.C) void {
     c.g_action_map_add_action(@ptrCast(window), @ptrCast(about_action));
     
     // Layout
+    
+    const width_breakpoint = c.adw_breakpoint_new(c.adw_breakpoint_condition_new_length(c.ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 600, c.ADW_LENGTH_UNIT_SP));
+    _ = c.g_signal_connect_data(width_breakpoint, "apply", &windowDidBecomeNarrow, null, null, 0);
+    _ = c.g_signal_connect_data(width_breakpoint, "unapply", &windowDidBecomeWide, null, null, 0);
+    c.adw_application_window_add_breakpoint(@ptrCast(window), width_breakpoint);
     
     const main_menu = c.g_menu_new();
     c.g_menu_append(main_menu, "About Crates", "win.about");
@@ -108,7 +119,8 @@ fn activate() callconv(.C) void {
     
     const source_button = c.gtk_button_new();
     c.gtk_button_set_icon_name(@ptrCast(source_button), "search-global-symbolic");
-    c.gtk_widget_set_tooltip_text(source_button, "Source");
+    c.gtk_widget_set_tooltip_text(source_button, "Sources");
+    _ = c.g_signal_connect_data(source_button, "clicked", &showSourceDialog, null, null, 0);
     
     search_entry = c.gtk_search_entry_new();
     c.gtk_search_entry_set_placeholder_text(@ptrCast(search_entry), "Search crates.io");
@@ -133,7 +145,48 @@ fn activate() callconv(.C) void {
     c.gtk_window_set_focus(@ptrCast(window), null);
 }
 
+var is_window_narrow = false;
+
+// NOTE: To use adaptive layout leak the response or manage it
+fn windowDidBecomeNarrow() callconv(.C) void {
+    // is_window_narrow = true;
+    
+    // if (is_empty) return;
+    
+    // response_buf_mutex.lock();
+    // searchSubmitReal(response_buf);
+    // response_buf_mutex.unlock();
+}
+
+fn windowDidBecomeWide() callconv(.C) void {
+    // is_window_narrow = false;
+    
+    // if (is_empty) return;
+    
+    // response_buf_mutex.lock();
+    // searchSubmitReal(response_buf);
+    // response_buf_mutex.unlock();
+}
+
+fn showSourceDialog() callconv(.C) void {
+    const sources_dialog = c.adw_dialog_new();
+    c.adw_dialog_set_title(sources_dialog, "Sources");
+    
+    const src_toolbar_view = c.adw_toolbar_view_new();
+    
+    const header = c.adw_header_bar_new();
+    c.adw_toolbar_view_add_top_bar(@ptrCast(src_toolbar_view), header);
+    
+    // const list = c.gtklistboxnew
+    
+    c.adw_dialog_set_child(sources_dialog, src_toolbar_view);
+    c.adw_dialog_present(sources_dialog, window);
+}
+
+var is_empty = true;
+
 fn setEmptyView() void {
+    is_empty = true;
     const status_page = c.adw_status_page_new();
     // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(status_page), "compact");
     c.adw_status_page_set_icon_name(@ptrCast(status_page), "com.github.TeamPuzel.Crates");
@@ -150,16 +203,8 @@ fn setFailureView() void {
     c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), status_page);
 }
 
-fn setNoQueryView() void {
-    const placeholder_label = c.gtk_label_new("No search query");
-    c.gtk_widget_set_hexpand(placeholder_label, 0);
-    c.gtk_style_context_add_class(c.gtk_widget_get_style_context(placeholder_label), "title-4");
-    
-    c.adw_toolbar_view_set_content(@ptrCast(toolbar_view), placeholder_label);
-    // c.gtk_window_set_focus(@ptrCast(window), null);
-}
-
 fn setLoadingView() void {
+    is_empty = false;
     const content = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
     
     const header = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
@@ -272,7 +317,7 @@ fn threadTask(query: []const u8) void {
 fn threadComplete(_: ?*anyopaque) callconv(.C) c_int {
     response_buf_mutex.lock();
     searchSubmitReal(response_buf);
-    std.heap.c_allocator.free(response_buf);
+    // std.heap.c_allocator.free(response_buf);
     response_buf_mutex.unlock();
     return c.G_SOURCE_REMOVE;
 }
@@ -349,16 +394,18 @@ fn searchSubmitReal(response: []const u8) void {
     c.gtk_widget_set_margin_end(list, 16);
     
     for (parsed.crates) |crate| {
-        const row = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row), "card");
+        defer c.gtk_box_append(@ptrCast(list), c.gtk_separator_new(c.GTK_ORIENTATION_VERTICAL));
+        const row = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
+        // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row), "card");
         // c.gtk_widget_set_size_request(row, -1, 64);
         
         const row_header = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
-        c.gtk_widget_set_size_request(row_header, -1, 32);
+        // c.gtk_widget_set_size_request(row_header, -1, 32);
         c.gtk_widget_set_margin_start(row_header, 12);
         c.gtk_widget_set_margin_end(row_header, 12);
         
         const title_label = c.gtk_label_new(std.fmt.allocPrintZ(arena, "<b><span>{s}</span></b>", .{ crate.name }) catch unreachable);
+        c.gtk_label_set_ellipsize(@ptrCast(title_label), c.PANGO_ELLIPSIZE_END);
         c.gtk_label_set_use_markup(@ptrCast(title_label), 1);
         c.gtk_box_append(@ptrCast(row_header), title_label);
         const description_label = c.gtk_label_new(std.fmt.allocPrintZ(arena, "{s}", .{ std.mem.sliceTo(crate.description.ptr, '\n') }) catch unreachable);
@@ -366,43 +413,59 @@ fn searchSubmitReal(response: []const u8) void {
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(description_label), "dim-label");
         c.gtk_box_append(@ptrCast(row_header), description_label);
         
+        const spacer = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
+        c.gtk_widget_set_hexpand(spacer, 1);
+        c.gtk_box_append(@ptrCast(row_header), spacer);
+        
         c.gtk_box_append(@ptrCast(row), row_header);
         
         const row_detail = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 8);
-        // c.gtk_widget_set_halign(row_detail, c.GTK_ALIGN_END);
+        c.gtk_widget_set_halign(row_detail, c.GTK_ALIGN_END);
         // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row_detail), "toolbar");
         // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(row_detail), "linked");
-        c.gtk_widget_set_size_request(row_detail, -1, 32);
+        // c.gtk_widget_set_size_request(row_detail, -1, 32);
         c.gtk_widget_set_margin_start(row_detail, 8);
         c.gtk_widget_set_margin_end(row_detail, 8);
-        c.gtk_widget_set_margin_bottom(row_detail, 8);
+        // c.gtk_widget_set_margin_bottom(row_detail, 8);
         
-        const website_button = c.gtk_button_new_from_icon_name("globe-symbolic");
-        c.gtk_widget_set_tooltip_text(website_button, "Website");
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(website_button), "circular");
-        c.gtk_box_append(@ptrCast(row_detail), website_button);
-        const repo_button = c.gtk_button_new_from_icon_name("git-symbolic");
-        c.gtk_widget_set_tooltip_text(repo_button, "Repository");
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(repo_button), "circular");
-        c.gtk_box_append(@ptrCast(row_detail), repo_button);
-        const doc_button = c.gtk_button_new_from_icon_name("open-book-symbolic");
-        c.gtk_widget_set_tooltip_text(doc_button, "Documentation");
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(doc_button), "circular");
-        c.gtk_box_append(@ptrCast(row_detail), doc_button);
-        const more_button = c.gtk_button_new_from_icon_name("external-link-symbolic");
-        c.gtk_widget_set_tooltip_text(more_button, "Open");
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(more_button), "circular");
-        c.gtk_box_append(@ptrCast(row_detail), more_button);
-        
-        if (crate.homepage == null) c.gtk_widget_set_sensitive(website_button, 0)
-        else _ = c.g_signal_connect_data(website_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.homepage.?.ptr)), null, 0);
-        if (crate.repository == null) c.gtk_widget_set_sensitive(repo_button, 0)
-        else _ = c.g_signal_connect_data(repo_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.repository.?.ptr)), null, 0);
-        if (crate.documentation == null) c.gtk_widget_set_sensitive(doc_button, 0)
-        else _ = c.g_signal_connect_data(doc_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.documentation.?.ptr)), null, 0);
-        _ = c.g_signal_connect_data(more_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(
-            std.fmt.allocPrintZ(arena, "https://crates.io/crates/{s}", .{ crate.name }) catch unreachable
-        )), null, 0);
+        if (!is_window_narrow) {
+            const website_button = c.gtk_button_new_from_icon_name("globe-symbolic");
+            c.gtk_widget_set_tooltip_text(website_button, "Website");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(website_button), "circular");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(website_button), "flat");
+            c.gtk_box_append(@ptrCast(row_detail), website_button);
+            const repo_button = c.gtk_button_new_from_icon_name("git-symbolic");
+            c.gtk_widget_set_tooltip_text(repo_button, "Repository");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(repo_button), "circular");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(repo_button), "flat");
+            c.gtk_box_append(@ptrCast(row_detail), repo_button);
+            const doc_button = c.gtk_button_new_from_icon_name("open-book-symbolic");
+            c.gtk_widget_set_tooltip_text(doc_button, "Documentation");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(doc_button), "circular");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(doc_button), "flat");
+            c.gtk_box_append(@ptrCast(row_detail), doc_button);
+            const more_button = c.gtk_button_new_from_icon_name("external-link-symbolic");
+            c.gtk_widget_set_tooltip_text(more_button, "Open");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(more_button), "circular");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(more_button), "flat");
+            c.gtk_box_append(@ptrCast(row_detail), more_button);
+            
+            if (crate.homepage == null) c.gtk_widget_set_sensitive(website_button, 0)
+            else _ = c.g_signal_connect_data(website_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.homepage.?.ptr)), null, 0);
+            if (crate.repository == null) c.gtk_widget_set_sensitive(repo_button, 0)
+            else _ = c.g_signal_connect_data(repo_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.repository.?.ptr)), null, 0);
+            if (crate.documentation == null) c.gtk_widget_set_sensitive(doc_button, 0)
+            else _ = c.g_signal_connect_data(doc_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(crate.documentation.?.ptr)), null, 0);
+            _ = c.g_signal_connect_data(more_button, "clicked", @ptrCast(&openAddressClosure), @constCast(@ptrCast(
+                std.fmt.allocPrintZ(arena, "https://crates.io/crates/{s}", .{ crate.name }) catch unreachable
+            )), null, 0);
+        } else {
+            const overflow_button = c.gtk_button_new_from_icon_name("view-more-horizontal-symbolic");
+            c.gtk_widget_set_tooltip_text(overflow_button, "More Options");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(overflow_button), "circular");
+            c.gtk_style_context_add_class(c.gtk_widget_get_style_context(overflow_button), "flat");
+            c.gtk_box_append(@ptrCast(row_detail), overflow_button);
+        }
          
         c.gtk_box_append(@ptrCast(row), row_detail);
         
@@ -412,19 +475,25 @@ fn searchSubmitReal(response: []const u8) void {
     const final_buttons = c.gtk_box_new(c.GTK_ORIENTATION_HORIZONTAL, 0);
     c.gtk_style_context_add_class(c.gtk_widget_get_style_context(final_buttons), "linked");
     
-    if (current_page > 1) {
-        const previous_page_final_button = c.gtk_button_new_with_label("Previous Page");
-        c.gtk_widget_set_hexpand(previous_page_final_button, 1);
-        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(previous_page_final_button), "pill");
-        _ = c.g_signal_connect_data(previous_page_final_button, "clicked", pagePrev, null, null, 0);
-        c.gtk_box_append(@ptrCast(final_buttons), previous_page_final_button);
-    }
+    // const final_size_group = c.gtk_size_group_new(c.GTK_SIZE_GROUP_HORIZONTAL);
+    // defer c.g_object_unref(final_size_group);
+    
+    // if (current_page > 1) {
+    //     const previous_page_final_button = c.gtk_button_new_with_label("Previous Page");
+    //     c.gtk_widget_set_hexpand(previous_page_final_button, 1);
+    //     c.gtk_style_context_add_class(c.gtk_widget_get_style_context(previous_page_final_button), "pill");
+    //     _ = c.g_signal_connect_data(previous_page_final_button, "clicked", pagePrev, null, null, 0);
+    //     // c.gtk_size_group_add_widget(final_size_group, previous_page_final_button);
+    //     c.gtk_box_append(@ptrCast(final_buttons), previous_page_final_button);
+    // }
     if (current_page != total_pages) {
         const next_page_final_button = c.gtk_button_new_with_label("Next Page");
         c.gtk_widget_set_hexpand(next_page_final_button, 1);
+        c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "flat");
         c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "pill");
         // c.gtk_style_context_add_class(c.gtk_widget_get_style_context(next_page_final_button), "suggested-action");
         _ = c.g_signal_connect_data(next_page_final_button, "clicked", pageNext, null, null, 0);
+        // c.gtk_size_group_add_widget(final_size_group, next_page_final_button);
         c.gtk_box_append(@ptrCast(final_buttons), next_page_final_button);
     }
     
@@ -456,7 +525,7 @@ fn about() callconv(.C) void {
     c.adw_about_dialog_set_developer_name(@ptrCast(about_window), "TeamPuzel (Lua)");
     c.adw_about_dialog_set_version(@ptrCast(about_window), version_string);
     c.adw_about_dialog_set_copyright(@ptrCast(about_window), "© 2024 TeamPuzel (Lua)");
-    c.adw_about_dialog_set_issue_url(@ptrCast(about_window), "https://github.com/TeamPuzel/Crates/issues/new");
+    c.adw_about_dialog_set_issue_url(@ptrCast(about_window), "https://github.com/TeamPuzel/Crates/issues");
     c.adw_about_dialog_set_website(@ptrCast(about_window), "https://github.com/TeamPuzel/Crates");
     c.adw_about_dialog_set_license_type(@ptrCast(about_window), c.GTK_LICENSE_GPL_3_0);
     c.adw_about_dialog_set_developers(@ptrCast(about_window), @constCast(@ptrCast(&developers)));

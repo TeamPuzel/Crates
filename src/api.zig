@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const per_page = 50;
+pub const per_page = 100;
 
 pub const Search = struct {
     crates: []Crate,
