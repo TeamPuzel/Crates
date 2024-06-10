@@ -8,10 +8,11 @@ zig build
 zig-out/bin/crates --install # or just -i
 ```
 
-Building depends on the libadwaita-1 development package and the Zig compiler.
-It may not build with the latest compiler as it is very unstable but it should always be up to date with my fork of Zig.
+Building depends only on the libadwaita-1 shared library and headers, and of course the Zig compiler.
+It may not build with the latest compiler as it is quite unstable but it should always be up to date with my fork of Zig.
 
 Cross compilation is possible but requires shared libraries to be present for the target.
+In fact it should be able to cross compile from a completely different (unix-like) operating system.
 
 Use this command (with the libraries present) to cross compile and create tar.xz bundles for flatpak:
 ```sh

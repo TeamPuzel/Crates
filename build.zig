@@ -106,6 +106,9 @@ pub fn build(b: *std.Build) !void {
     
     // MARK: - Flatpak -------------------------------------------------------------------------------------------------
     
+    var manifest = b.addWriteFile(id ++ ".yml", try generateFlatpakManifestForRelease(b));
+    var manifest_steps = std.ArrayList(*ManifestSourceDerive).init(b.allocator);
+    
     const bundle_step = b.step("bundle", "Generate a bundle and flatpak manifest for a GitHub release");
     
     for (bundle_targets) |bundle_target| {
@@ -131,18 +134,42 @@ pub fn build(b: *std.Build) !void {
         
         const archive_dir = b.addWriteFiles();
         _ = archive_dir.addCopyFile(artifact.emitted_bin.?, "crates");
-        // _ = archive_dir.addCopyFile(source: std.Build.LazyPath, sub_path: []const u8) // Resources
+        _ = archive_dir.add(id ++ ".metainfo.xml", try generateMetaInfoForRelease(b));
+        _ = archive_dir.add(id ++ ".desktop", try generateDesktopFileForRelease(b, version));
+        
+        _ = archive_dir.addCopyFile(icon_step.getDirectory().path(b, "resources.gresource"), "resources.gresource");
+        archive_dir.step.dependOn(&compile_icons_step.step);
+        
+        _ = archive_dir.addCopyFile(b.path("resources/cargo.svg"), id ++ ".svg");
         
         const compress_step = b.addSystemCommand(&.{
             "sh", "-c",
             try std.fmt.allocPrint(
                 b.allocator,
                 "tar cfJ crates-{s}.tar.xz *",
-                .{ artifact.dest_dir.?.custom }
+                .{ @tagName(bundle_target.cpu_arch.?) }
             )
         });
         compress_step.step.dependOn(&archive_dir.step);
         compress_step.setCwd(archive_dir.getDirectory());
+        
+        const checksum_step = b.addSystemCommand(&.{
+            "sh", "-c",
+            try std.fmt.allocPrint(
+                b.allocator,
+                "sha256sum crates-{s}.tar.xz",
+                .{ @tagName(bundle_target.cpu_arch.?) }
+            )
+        });
+        checksum_step.step.dependOn(&compress_step.step);
+        checksum_step.setCwd(archive_dir.getDirectory());
+        const stdout = checksum_step.captureStdOut();
+        const manifest_source_step = ManifestSourceDerive.init(
+            b, manifest.getDirectory().path(b, id ++ ".yml"), stdout, version, @tagName(bundle_target.cpu_arch.?)
+        );
+        manifest_source_step.step.dependOn(&checksum_step.step);
+        manifest_source_step.step.dependOn(&manifest.step);
+        try manifest_steps.append(manifest_source_step);
         
         const archive_name = try std.fmt.allocPrint(b.allocator, "crates-{s}.tar.xz", .{ @tagName(bundle_target.cpu_arch.?) });
         
@@ -156,10 +183,62 @@ pub fn build(b: *std.Build) !void {
         bundle_step.dependOn(&install_step.step);
     }
     
-    // const metainfo_install_step = b.addWriteFile(id ++ ".metainfo.xml", try generateMetaInfoForRelease(b));
-    // TODO: This step depends on the sha256 of the bundle and needs to be completed last.
-    // const flatpak_manifest_install_step = b.addWriteFile(id ++ ".yml", try generateFlatpakManifestForRelease(b, version, "todo", "todo"));
+    const install_manifest = b.addInstallFile(manifest.getDirectory().path(b, id ++ ".yml"), id ++ ".yml");
+    for (manifest_steps.items) |step| install_manifest.step.dependOn(&step.step);
+    install_manifest.dir = .{ .custom = "bundle" };
+    
+    bundle_step.dependOn(&install_manifest.step);
 }
+
+const ManifestSourceDerive = struct {
+    step: std.Build.Step,
+    version: []const u8,
+    arch: []const u8,
+    manifest: std.Build.LazyPath,
+    sha256: std.Build.LazyPath,
+
+    fn init(
+        b: *std.Build,
+        manifest: std.Build.LazyPath,
+        sha256: std.Build.LazyPath,
+        version: []const u8,
+        arch: []const u8
+    ) *ManifestSourceDerive {
+        const self = b.allocator.create(ManifestSourceDerive) catch unreachable;
+        self.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "ManifestSourceDeriveStep",
+                .owner = b,
+                .makeFn = make
+            }),
+            .manifest = manifest,
+            .sha256 = sha256,
+            .version = version,
+            .arch = arch
+        };
+        return self;
+    }
+    
+    fn make(step: *std.Build.Step, _: std.Progress.Node) anyerror!void {
+        const self: *ManifestSourceDerive = @fieldParentPtr("step", step);
+        
+        const sha_raw = try std.fs.openFileAbsolute(self.sha256.getPath(self.step.owner), .{});
+        const sha = try sha_raw.readToEndAlloc(self.step.owner.allocator, std.math.maxInt(usize));
+        
+        const man = try std.fs.openFileAbsolute(self.manifest.getPath(self.step.owner), .{ .lock = .exclusive, .mode = .read_write });
+        defer man.close();
+        
+        try man.seekTo(try man.getEndPos());
+        
+        try man.writeAll(try generateFlatpakManifestSourceForRelease(
+            self.step.owner,
+            self.version,
+            std.mem.sliceTo(sha, ' '),
+            self.arch
+        ));
+    }
+};
 
 fn prepareIconBundleStep(b: *std.Build) !*std.Build.Step.WriteFile {
     const icon_step = b.addWriteFiles();
@@ -188,12 +267,7 @@ fn prepareIconBundleStep(b: *std.Build) !*std.Build.Step.WriteFile {
     return icon_step;
 }
 
-fn generateFlatpakManifestForRelease(
-    b: *std.Build,
-    version: []const u8,
-    sha_x86_64: []const u8,
-    sha_aarch64: []const u8
-) ![]const u8 {
+fn generateFlatpakManifestForRelease(b: *std.Build) ![]const u8 {
     return try std.fmt.allocPrint(
         b.allocator,
         \\id: {s}
@@ -216,22 +290,32 @@ fn generateFlatpakManifestForRelease(
         \\    - install -Dm644 ${{FLATPAK_ID}}.metainfo.xml ${{FLATPAK_DEST}}/share/metainfo/${{FLATPAK_ID}}.metainfo.xml
         \\    - install -Dm644 ${{FLATPAK_ID}}.svg ${{FLATPAK_DEST}}/share/icons/hicolor/scalable/apps/${{FLATPAK_ID}}.svg
         \\    - install -Dm644 ${{FLATPAK_ID}}.desktop ${{FLATPAK_DEST}}/share/applications/${{FLATPAK_ID}}.desktop
+        \\    - install -Dm644 resources.gresource ${{FLATPAK_DEST}}/bin/resources.gresource
         \\    - install -Dm755 crates ${{FLATPAK_DEST}}/bin/crates
         \\    sources:
-        \\    - type: file
-        \\        dest-filename: crates.tar.xz
-        \\        url: https://github.com/TeamPuzel/Crates/releases/download/{s}/crates-x86_64.tar.xz
-        \\        sha256: TODO
-        \\        only-arches:
-        \\        - x86_64
-        \\    - type: file
-        \\        dest-filename: crates.tar.xz
-        \\        url: https://github.com/TeamPuzel/Crates/releases/download/{s}/crates-aarch64.tar.xz
-        \\        sha256: TODO
-        \\        only-arches:
-        \\        - aarch64
+        \\
         ,
-        .{ id, version, sha_x86_64, version, sha_aarch64 }
+        .{ id }
+    );
+}
+
+fn generateFlatpakManifestSourceForRelease(
+    b: *std.Build,
+    version: []const u8,
+    sha256: []const u8,
+    arch: []const u8
+) ![]const u8 {
+    return try std.fmt.allocPrint(
+        b.allocator,
+        \\    - type: file
+        \\        dest-filename: crates.tar.xz
+        \\        url: https://github.com/TeamPuzel/Crates/releases/download/{s}/crates-{s}.tar.xz
+        \\        sha256: {s}
+        \\        only-arches:
+        \\        - {s}
+        \\
+        ,
+        .{ version, arch, sha256, arch }
     );
 }
 
