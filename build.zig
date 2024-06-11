@@ -62,7 +62,19 @@ pub fn build(b: *std.Build) !void {
     // While surprisingly no distribution I use allows conveniently downloading those, it is fairly easy
     // to do so using a container (if a bit wasteful).
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
-    if (target.query.isNative()) {
+    if (target.result.os.tag == .macos and target.query.isNative()) {
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/pango/1.52.2/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/harfbuzz/8.5.0/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gdk-pixbuf/2.42.12/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/cairo/1.18.0/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/graphene/1.10.8/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/glib/2.80.2/lib" });
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/gettext/lib" });
+        
+        exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
+    } else if (target.query.isNative()) {
         exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
         exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
     } else {

@@ -4,6 +4,9 @@ const config = @import("config");
 
 const api = @import("api.zig");
 
+var global_alloc = std.heap.GeneralPurposeAllocator(.{}) {};
+const alloc = global_alloc.allocator();
+
 pub const version_string = if (config.stable)
     std.fmt.comptimePrint("{s}", .{ config.version })
     else std.fmt.comptimePrint("{s} dev {d}", .{ config.version, config.build_id });
@@ -14,8 +17,8 @@ pub const std_options = std.Options {
 };
 
 fn gtkLog(comptime message_level: std.log.Level, comptime _: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
-    const msg = std.fmt.allocPrintZ(std.heap.c_allocator, fmt, args) catch return;
-    defer std.heap.c_allocator.free(msg);
+    const msg = std.fmt.allocPrintZ(alloc, fmt, args) catch return;
+    defer alloc.free(msg);
     c.g_log(
         null,
         switch (message_level) {
@@ -289,7 +292,7 @@ fn searchSubmitAsync(query: []const u8) void {
     }
     setLoadingView();
     
-    const copy = std.heap.c_allocator.alloc(u8, query.len) catch unreachable;
+    const copy = alloc.alloc(u8, query.len) catch unreachable;
     std.mem.copyForwards(u8, copy, query);
     const task = std.Thread.spawn(.{}, threadTask, .{ copy }) catch unreachable;
     
@@ -300,7 +303,7 @@ var response_buf: []u8 = undefined; // The void pointer was somehow corrupting t
 var response_buf_mutex = std.Thread.Mutex {};
 
 fn threadTask(query: []const u8) void {
-    const response = api.get(query, current_page, std.heap.c_allocator)
+    const response = api.get(query, current_page, alloc)
     catch {
         c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadFailure, null, null);
         return;
@@ -310,14 +313,14 @@ fn threadTask(query: []const u8) void {
     response_buf = response;
     response_buf_mutex.unlock();
     
-    std.heap.c_allocator.free(query);
+    alloc.free(query);
     c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadComplete, null, null);
 }
 
 fn threadComplete(_: ?*anyopaque) callconv(.C) c_int {
     response_buf_mutex.lock();
     searchSubmitReal(response_buf);
-    // std.heap.c_allocator.free(response_buf);
+    // alloc.free(response_buf);
     response_buf_mutex.unlock();
     return c.G_SOURCE_REMOVE;
 }
@@ -332,7 +335,7 @@ var list_arena: ?std.heap.ArenaAllocator = null;
 
 fn searchSubmitReal(response: []const u8) void {
     if (list_arena != null) list_arena.?.deinit();
-    list_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    list_arena = std.heap.ArenaAllocator.init(alloc);
     
     const arena = list_arena.?.allocator();
     

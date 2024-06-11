@@ -32,7 +32,7 @@ pub fn get(query: []const u8, page: usize, alloc: std.mem.Allocator) ![]u8 {
         ++ "&q={s}&page={d}",
         .{ query, page }
     );
-    defer std.heap.c_allocator.free(url);
+    defer alloc.free(url);
     
     var response = std.ArrayList(u8).init(alloc);
     
