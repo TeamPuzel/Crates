@@ -1,4 +1,4 @@
-### A Rust crate browser for GNOME.
+### A Rust crate browser for GNOME and Cocoa.
 
 It is very minimal in design and implementation and written in Zig.
 
