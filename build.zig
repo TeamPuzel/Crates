@@ -12,11 +12,13 @@ pub fn build(b: *std.Build) !void {
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
     const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
     const version = b.option([]const u8, "version", "Manually specify a value") orelse suggested_version;
+    const cocoa = b.option(bool, "cocoa", "Use a native frontend on macOS") orelse false;
     
     const options = b.addOptions();
     options.addOption(bool, "stable", stable);
     options.addOption(u16, "build_id", build_id);
     options.addOption([]const u8, "version", version);
+    options.addOption(bool, "cocoa", cocoa);
     
     // MARK: - Resources -----------------------------------------------------------------------------------------------
     
@@ -52,7 +54,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize
     });
     exe.linkLibC();
-    exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
+    if (!cocoa) exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
     
     exe.step.dependOn(&resource_install_step.step);
     exe.step.dependOn(&copy_icon_resource_step.step);
@@ -63,17 +65,24 @@ pub fn build(b: *std.Build) !void {
     // to do so using a container (if a bit wasteful).
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
     if (target.result.os.tag == .macos and target.query.isNative()) {
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/pango/1.52.2/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/harfbuzz/8.5.0/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gdk-pixbuf/2.42.12/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/cairo/1.18.0/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/graphene/1.10.8/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/glib/2.80.2/lib" });
-        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/gettext/lib" });
+        if (!cocoa) {
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/pango/1.52.2/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/harfbuzz/8.5.0/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gdk-pixbuf/2.42.12/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/cairo/1.18.0/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/graphene/1.10.8/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/glib/2.80.2/lib" });
+            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/gettext/lib" });
+            
+            exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
+        } else {
+            exe.linkFramework("Cocoa");
+            exe.linkFramework("Foundation");
+        }
         
-        exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
+        exe.linkSystemLibrary("objc");
     } else if (target.query.isNative()) {
         exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
         exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
@@ -106,7 +115,7 @@ pub fn build(b: *std.Build) !void {
     const exe_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
-        .optimize = optimize,
+        .optimize = optimize
     });
     
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);

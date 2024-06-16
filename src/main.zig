@@ -1,11 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c.zig");
 const config = @import("config");
 
 const api = @import("api.zig");
+const objc = @import("objc/objc.zig");
 
 var global_alloc = std.heap.GeneralPurposeAllocator(.{}) {};
-const alloc = global_alloc.allocator();
+pub const alloc = global_alloc.allocator();
 
 pub const version_string = if (config.stable)
     std.fmt.comptimePrint("{s}", .{ config.version })
@@ -13,7 +15,7 @@ pub const version_string = if (config.stable)
 
 pub const std_options = std.Options {
     .side_channels_mitigations = .none,
-    .logFn = gtkLog
+    .logFn = if (config.cocoa) std.log.defaultLog else gtkLog
 };
 
 fn gtkLog(comptime message_level: std.log.Level, comptime _: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
@@ -37,6 +39,8 @@ var toolbar_view: *c.GtkWidget = undefined;
 var search_entry: *c.GtkWidget = undefined;
 
 pub fn main() !void {
+    defer _ = global_alloc.deinit();
+    
     var args = std.process.args();
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
@@ -61,16 +65,20 @@ pub fn main() !void {
         }
     }
     
-    app = c.g_object_new(
-        c.adw_application_get_type(),
-        "application-id", "com.github.TeamPuzel.Crates",
-        c.NULL
-    ) orelse return error.CreatingApplication;
-    defer c.g_object_unref(app);
-    
-    _ = c.g_signal_connect_data(@ptrCast(app), "activate", activate, null, null, 0);
-    
-    _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
+    if (!config.cocoa) {
+        app = c.g_object_new(
+            c.adw_application_get_type(),
+            "application-id", "com.github.TeamPuzel.Crates",
+            c.NULL
+        ) orelse return error.CreatingApplication;
+        defer c.g_object_unref(app);
+        
+        _ = c.g_signal_connect_data(@ptrCast(app), "activate", activate, null, null, 0);
+        
+        _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
+    } else {
+        try cocoaMain();
+    }
 }
 
 fn registerResourceAt(path: [:0]const u8, silent: bool) error{GenericError}!void {
@@ -510,7 +518,23 @@ fn searchSubmitReal(response: []const u8) void {
 }
 
 fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
-    c.gtk_show_uri(@ptrCast(window), addr, 0);
+    if (builtin.target.os.tag == .macos) { // Adwaita/GTK can't open links on macOS
+        const autoreleasepool = objc.AutoreleasePool.init();
+        defer autoreleasepool.deinit();
+        
+        const NSWorkspace = objc.AnyClass.named("NSWorkspace");
+        const NSURL = objc.AnyClass.named("NSURL");
+        const NSString = objc.AnyClass.named("NSString");
+        
+        const shared_workspace = NSWorkspace.msg("sharedWorkspace", .{}, objc.AnyInstance);
+        shared_workspace.msg("openURL:", .{
+            NSURL.msg("URLWithString:", .{
+                NSString.msg("stringWithUTF8String:", .{ addr }, objc.AnyInstance)
+            }, objc.AnyInstance)
+        }, void);
+    } else {
+        c.gtk_show_uri(@ptrCast(window), addr, 0);
+    }
 }
 
 fn about() callconv(.C) void {
@@ -541,4 +565,145 @@ fn about() callconv(.C) void {
 
 fn shortcuts() callconv(.C) void {
     
+}
+
+// MARK: - Cocoa -------------------------------------------------------------------------------------------------------
+
+fn cocoaMain() !noreturn {
+    createClasses();
+    
+    const autoreleasepool = AutoreleasePool.init();
+    defer autoreleasepool.deinit();
+    
+    const NSApplication = AnyClass.named("NSApplication");
+    
+    const CratesApplicationDelegate = AnyClass.named("CratesApplicationDelegate");
+    
+    const nsapp = NSApplication.msg("sharedApplication", .{}, AnyInstance);
+    nsapp.msg("setActivationPolicy:", .{ @as(usize, 0) }, void);
+    
+    const delegate = CratesApplicationDelegate.msg("alloc", .{}, AnyInstance);
+    delegate.msg("autorelease", .{}, void);
+    
+    nsapp.msg("setDelegate:", .{ delegate }, void);
+    nsapp.msg("run", .{}, noreturn);
+}
+
+const AutoreleasePool = objc.AutoreleasePool;
+const AnyClass = objc.AnyClass;
+const AnyInstance = objc.AnyInstance;
+const AnyProtocol = objc.AnyProtocol;
+const Selector = objc.Selector;
+const nil = objc.nil;
+
+fn createClasses() void {
+    const NSObject = AnyClass.named("NSObject");
+    
+    const CratesApplicationDelegate = AnyClass.new("CratesApplicationDelegate", NSObject);
+    defer CratesApplicationDelegate.register();
+    _ = CratesApplicationDelegate.method("applicationDidFinishLaunching:", "@:@", CratesApplicationDelegate_applicationDidFinishLaunching);
+    _ = CratesApplicationDelegate.method("applicationShouldTerminateAfterLastWindowClosed:", "@:@", CratesApplicationDelegate_applicationShouldTerminateAfterLastWindowClosed);
+    _ = CratesApplicationDelegate.method("applicationWillTerminate:", "@:@", CratesApplicationDelegate_applicationWillTerminate);
+    
+    const CratesWindowDelegate = AnyClass.new("CratesWindowDelegate", NSObject);
+    defer CratesWindowDelegate.register();
+    _ = CratesWindowDelegate.method("windowWillClose:", "@:@", CratesWindowDelegate_windowWillClose);
+}
+
+fn CratesApplicationDelegate_applicationShouldTerminateAfterLastWindowClosed(_: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) bool { return true; }
+
+fn CratesApplicationDelegate_applicationWillTerminate(_: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) void {
+    _ = global_alloc.deinit();
+}
+
+fn CratesApplicationDelegate_applicationDidFinishLaunching(self: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) void {
+    const NSWindow = AnyClass.named("NSWindow");
+    const NSApplication = AnyClass.named("NSApplication");
+    const NSMenu = AnyClass.named("NSMenu");
+    const NSMenuItem = AnyClass.named("NSMenuItem");
+    const NSString = AnyClass.named("NSString");
+    const CratesWindowDelegate = AnyClass.named("CratesWindowDelegate");
+    
+    // main_menu.msg("initWithTitle:", .{
+    //     NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Main Menu") }, objc.AnyInstance)
+    // }, void);
+    
+    const nsapp = NSApplication.msg("sharedApplication", .{}, AnyInstance);
+    
+    const main_menu = nsapp.msg("mainMenu", .{}, AnyInstance);
+    
+    const window_menu_item = NSMenuItem
+        .msg("alloc", .{}, AnyInstance)
+        .msg("init", .{}, AnyInstance)
+        .msg("autorelease", .{}, AnyInstance);
+    window_menu_item.msg("setTitle:", .{
+        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Window") }, objc.AnyInstance)
+    }, void);
+    const window_menu = NSMenu
+        .msg("alloc", .{}, AnyInstance)
+        .msg("init", .{}, AnyInstance)
+        .msg("autorelease", .{}, AnyInstance);
+    window_menu_item.msg("setSubmenu:", .{ window_menu }, void);
+    nsapp.msg("setWindowsMenu:", .{ window_menu }, void);
+    
+    main_menu.msg("addItem:", .{ window_menu_item }, void);
+    
+    const help_menu_item = NSMenuItem.msg("alloc", .{}, AnyInstance)
+        .msg("init", .{}, AnyInstance)
+        .msg("autorelease", .{}, AnyInstance);
+    help_menu_item.msg("setTitle:", .{
+        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Help") }, objc.AnyInstance)
+    }, void);
+    const help_menu = NSMenu.msg("alloc", .{}, AnyInstance)
+        .msg("init", .{}, AnyInstance)
+        .msg("autorelease", .{}, AnyInstance);
+    help_menu_item.msg("setSubmenu:", .{ help_menu }, void);
+    nsapp.msg("setHelpMenu:", .{ help_menu }, void);
+    
+    main_menu.msg("addItem:", .{ help_menu_item }, void);
+    
+    const rect = NSRect { .x = 0, .y = 0, .w = 800, .h = 600 };
+    const style = NSWindowStyleMask {};
+    const backing: objc.foundation.NSUInteger = 2;
+    const nswindow = NSWindow
+        .msg("alloc", .{}, AnyInstance)
+        .msg("initWithContentRect:styleMask:backing:defer:", .{ rect, style, backing, false }, AnyInstance);
+    // nswindow.msg("setMinSize:", .{ NSSize { .w = 400, .h = 500 } }, void);
+    if (!nswindow.msg("setFrameUsingName:", .{
+        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
+    }, bool)) nswindow.msg("center", .{}, void);
+    
+    _ = nswindow.msg("setFrameAutosaveName:", .{
+        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
+    }, bool);
+    
+    const delegate = CratesWindowDelegate
+        .msg("alloc", .{}, AnyInstance)
+        .msg("autorelease", .{}, AnyInstance);
+    
+    nswindow.msg("setDelegate:", .{ delegate }, void);
+    
+    NSApplication.msg("sharedApplication", .{}, AnyInstance).msg("activateIgnoringOtherApps:", .{ true }, void);
+    nswindow.msg("makeKeyAndOrderFront:", .{ self }, void);
+}
+
+const NSRect = extern struct { x: f64, y: f64, w: f64, h: f64 };
+const NSSize = extern struct { w: f64, h: f64 };
+
+const NSWindowStyleMask = packed struct (usize) {
+    titled: bool = true,
+    closable: bool = true,
+    minimizable: bool = true,
+    resizable: bool = true,
+    _pad: u60 = 0
+};
+
+fn CratesWindowDelegate_windowWillClose(_: AnyInstance, _: Selector, notification: AnyInstance) callconv(.C) void {
+    const NSString = AnyClass.named("NSString");
+    
+    const nswindow = notification.msg("object", .{}, AnyInstance);
+    
+    nswindow.msg("saveFrameUsingName:", .{
+        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
+    }, void);
 }
