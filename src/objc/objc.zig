@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c.zig");
 
 pub const foundation = @import("frameworks/foundation.zig");
+pub const cocoa = @import("frameworks/cocoa.zig");
 
 pub const Selector = c.SEL;
 pub const nil = AnyInstance { .id = null };
@@ -75,7 +76,8 @@ pub const AnyClass = packed struct {
         if (fn_info.calling_convention != .C) @compileError("invalid calling convention");
         if (fn_info.is_var_args != false) @compileError("methods may not be variadic");
         if (fn_info.params.len < 2) @compileError("invalid signature");
-        if (fn_info.params[0].type != AnyInstance) @compileError("invalid signature");
+        // TODO: This has false positives
+        // if (fn_info.params[0].type != AnyInstance and !isClass(fn_info.params[0].type.?)) @compileError("invalid signature");
         if (fn_info.params[1].type != Selector) @compileError("invalid signature");
         
         const sel = c.sel_registerName(name);
@@ -94,7 +96,8 @@ pub const AnyClass = packed struct {
         if (fn_info.calling_convention != .C) @compileError("invalid calling convention");
         if (fn_info.is_var_args != false) @compileError("methods may not be variadic");
         if (fn_info.params.len < 2) @compileError("invalid signature");
-        if (fn_info.params[0].type != AnyClass) @compileError("invalid signature");
+        // TODO: This has false positives
+        // if (fn_info.params[0].type != AnyClass and !isClass(fn_info.params[0].type.?)) @compileError("invalid signature");
         if (fn_info.params[1].type != Selector) @compileError("invalid signature");
         
         const sel = c.sel_registerName(name);
@@ -161,12 +164,18 @@ pub const AnyInstance = packed struct {
         return @call(.auto, cast, .{ self.id, sel_uid } ++ args);
     }
     
-    pub inline fn retain(self: AnyInstance) void {
-        objc_retain(self.id);
+    pub inline fn retain(self: AnyInstance) AnyInstance {
+        return .{ .id = objc_retain(self.id) };
     }
     
     pub inline fn release(self: AnyInstance) void {
         objc_release(self.id);
+    }
+    
+    pub inline fn as(self: AnyInstance, comptime Class: type) Class {
+        comptime assertClass(Class);
+        return Class { .any = self };
+        // @compileError("safe downcast not implemented yet");
     }
 };
 
@@ -178,21 +187,21 @@ pub const AnyProtocol = packed struct {
     }
 };
 
-pub const AutoreleasePool = opaque {
-    pub inline fn init() *const AutoreleasePool {
+pub const AutoReleasePool = opaque {
+    pub inline fn init() *const AutoReleasePool {
         return @ptrCast(objc_autoreleasePoolPush().?);
     }
 
-    pub inline fn deinit(self: *const AutoreleasePool) void {
+    pub inline fn deinit(self: *const AutoReleasePool) void {
         objc_autoreleasePoolPop(@constCast(self));
     }
 };
 
-pub extern fn objc_retain(c.id) c.id;
-pub extern fn objc_release(c.id) void;
+extern fn objc_retain(c.id) c.id;
+extern fn objc_release(c.id) void;
 
-pub extern fn objc_autoreleasePoolPush() ?*anyopaque;
-pub extern fn objc_autoreleasePoolPop(?*anyopaque) void;
+extern fn objc_autoreleasePoolPush() ?*anyopaque;
+extern fn objc_autoreleasePoolPop(?*anyopaque) void;
 
 pub fn Block(comptime Args: type, comptime Return: type) type {
     return packed struct { const Self = @This();
@@ -236,7 +245,7 @@ pub fn Block(comptime Args: type, comptime Return: type) type {
     };
 }
 
-/// Do not construct, incomplete type
+/// Do not construct, incomplete type.
 const BlockLiteral = extern struct {
     isa: *anyopaque,
     flags: u32,
@@ -245,3 +254,53 @@ const BlockLiteral = extern struct {
     invoke: *const fn(ctx: AnyInstance) callconv(.C) void
     // More fields go here, no need to implement unless I need to create my own blocks
 };
+
+pub fn classNameFromType(comptime Class: type) []const u8 {
+    const qualified = @typeName(Class);
+    comptime var name_iter = std.mem.splitBackwardsScalar(u8, qualified, '.');
+    const name = comptime name_iter.next() orelse @typeName(Class);
+    comptime var cstr: [name.len:0]u8 = undefined;
+    comptime std.mem.copyForwards(u8, &cstr, name);
+    const copy = cstr;
+    return copy;
+}
+
+/// This is currently impossible due to https://github.com/ziglang/zig/issues/6709
+///
+/// Meta function that registers a class implementation from a Zig class wrapper.
+pub fn autoRegisterClass(comptime Class: type) void {
+    _ = Class;
+    // comptime assertClass(Class);
+    // const name = comptime classNameFromType(Class);
+    // const info = @typeInfo(Class);
+    
+    // const super = Class.super().class();
+    
+    // const class = AnyClass.new(name, super);
+    // defer class.register();
+    
+    // // TODO: Proper signature encoding function
+    // inline for (info.Struct.decls) |decl| {
+    //     class.method(decl.name, "", @decl(???))
+    // }
+}
+
+/// Assert that a type is a valid representation of a class.
+pub fn assertClass(comptime Class: type) void {
+    const info = @typeInfo(Class);
+    if (info != .Struct)                                     @compileError("classes must be structs");
+    if (info.Struct.layout != .@"packed")                    @compileError("classes must be packed");
+    if (info.Struct.fields.len != 1)                         @compileError("classes must have exactly one field");
+    if (!std.mem.eql(u8, info.Struct.fields[0].name, "any")) @compileError("the inner name must be \"any\"");
+    if (info.Struct.fields[0].type != AnyInstance)           @compileError("the inner type must be \"AnyInstance\"");
+}
+
+pub fn isClass(comptime Class: type) bool {
+    const info = @typeInfo(Class);
+    if (info != .Struct)                                     return false;
+    if (info.Struct.layout != .@"packed")                    return false;
+    if (info.Struct.fields.len != 1)                         return false;
+    if (!std.mem.eql(u8, info.Struct.fields[0].name, "any")) return false;
+    if (info.Struct.fields[0].type != AnyInstance)           return false;
+    return true;
+}

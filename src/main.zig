@@ -39,6 +39,7 @@ var toolbar_view: *c.GtkWidget = undefined;
 var search_entry: *c.GtkWidget = undefined;
 
 pub fn main() !void {
+    defer if (list_arena) |arena| arena.deinit();
     defer _ = global_alloc.deinit();
     
     var args = std.process.args();
@@ -311,7 +312,7 @@ var response_buf: []u8 = undefined; // The void pointer was somehow corrupting t
 var response_buf_mutex = std.Thread.Mutex {};
 
 fn threadTask(query: []const u8) void {
-    const response = api.get(query, current_page, alloc)
+    const response = api.get(query, current_page, alloc) // Memory leak :)
     catch {
         c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadFailure, null, null);
         return;
@@ -519,17 +520,16 @@ fn searchSubmitReal(response: []const u8) void {
 
 fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
     if (builtin.target.os.tag == .macos) { // Adwaita/GTK can't open links on macOS
-        const autoreleasepool = objc.AutoreleasePool.init();
+        const autoreleasepool = objc.AutoReleasePool.init();
         defer autoreleasepool.deinit();
         
         const NSWorkspace = objc.AnyClass.named("NSWorkspace");
         const NSURL = objc.AnyClass.named("NSURL");
-        const NSString = objc.AnyClass.named("NSString");
         
         const shared_workspace = NSWorkspace.msg("sharedWorkspace", .{}, objc.AnyInstance);
         shared_workspace.msg("openURL:", .{
             NSURL.msg("URLWithString:", .{
-                NSString.msg("stringWithUTF8String:", .{ addr }, objc.AnyInstance)
+                NSString.stringWithUTF8String(addr)
             }, objc.AnyInstance)
         }, void);
     } else {
@@ -569,141 +569,102 @@ fn shortcuts() callconv(.C) void {
 
 // MARK: - Cocoa -------------------------------------------------------------------------------------------------------
 
-fn cocoaMain() !noreturn {
-    createClasses();
-    
-    const autoreleasepool = AutoreleasePool.init();
-    defer autoreleasepool.deinit();
-    
-    const NSApplication = AnyClass.named("NSApplication");
-    
-    const CratesApplicationDelegate = AnyClass.named("CratesApplicationDelegate");
-    
-    const nsapp = NSApplication.msg("sharedApplication", .{}, AnyInstance);
-    nsapp.msg("setActivationPolicy:", .{ @as(usize, 0) }, void);
-    
-    const delegate = CratesApplicationDelegate.msg("alloc", .{}, AnyInstance);
-    delegate.msg("autorelease", .{}, void);
-    
-    nsapp.msg("setDelegate:", .{ delegate }, void);
-    nsapp.msg("run", .{}, noreturn);
-}
-
-const AutoreleasePool = objc.AutoreleasePool;
-const AnyClass = objc.AnyClass;
+const AutoReleasePool = objc.AutoReleasePool;
 const AnyInstance = objc.AnyInstance;
-const AnyProtocol = objc.AnyProtocol;
-const Selector = objc.Selector;
 const nil = objc.nil;
 
-fn createClasses() void {
-    const NSObject = AnyClass.named("NSObject");
+const foundation = objc.foundation;
+const cocoa = objc.cocoa;
+
+const NSString = foundation.NSString;
+const NSStr = foundation.NSStr;
+
+const NSNotification = foundation.NSNotification;
+const NSApplication = cocoa.NSApplication;
+const NSWindow = cocoa.NSWindow;
+const NSMenu = cocoa.NSMenu;
+const NSMenuItem = cocoa.NSMenuItem;
+
+fn cocoaMain() !noreturn {
+    registerClasses();
     
-    const CratesApplicationDelegate = AnyClass.new("CratesApplicationDelegate", NSObject);
-    defer CratesApplicationDelegate.register();
-    _ = CratesApplicationDelegate.method("applicationDidFinishLaunching:", "@:@", CratesApplicationDelegate_applicationDidFinishLaunching);
-    _ = CratesApplicationDelegate.method("applicationShouldTerminateAfterLastWindowClosed:", "@:@", CratesApplicationDelegate_applicationShouldTerminateAfterLastWindowClosed);
-    _ = CratesApplicationDelegate.method("applicationWillTerminate:", "@:@", CratesApplicationDelegate_applicationWillTerminate);
+    const autoreleasepool = AutoReleasePool.init();
+    defer autoreleasepool.deinit();
     
-    const CratesWindowDelegate = AnyClass.new("CratesWindowDelegate", NSObject);
-    defer CratesWindowDelegate.register();
-    _ = CratesWindowDelegate.method("windowWillClose:", "@:@", CratesWindowDelegate_windowWillClose);
+    const nsapp = NSApplication.sharedApplication();
+    _ = nsapp.setActivationPolicy(.regular);
+    nsapp.setDelegate(CratesApplicationDelegate.alloc().autorelease().any);
+    nsapp.run();
 }
 
-fn CratesApplicationDelegate_applicationShouldTerminateAfterLastWindowClosed(_: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) bool { return true; }
-
-fn CratesApplicationDelegate_applicationWillTerminate(_: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) void {
-    _ = global_alloc.deinit();
+fn registerClasses() void {
+    // Automatic registration is currently not implementable and does nothing
+    objc.autoRegisterClass(CratesApplicationDelegate);
+    objc.autoRegisterClass(CratesWindowDelegate);
+    
+    const NSObject = objc.AnyClass.named("NSObject");
+    
+    const ImplCratesApplicationDelegate = objc.AnyClass.new("CratesApplicationDelegate", NSObject);
+    defer ImplCratesApplicationDelegate.register();
+    _ = ImplCratesApplicationDelegate.method("applicationDidFinishLaunching:", "@:@", CratesApplicationDelegate.applicationDidFinishLaunching);
+    _ = ImplCratesApplicationDelegate.method("applicationShouldTerminateAfterLastWindowClosed:", "@:@", CratesApplicationDelegate.applicationShouldTerminateAfterLastWindowClosed);
+    _ = ImplCratesApplicationDelegate.method("applicationWillTerminate:", "@:@", CratesApplicationDelegate.applicationWillTerminate);
+    
+    const ImplCratesWindowDelegate = objc.AnyClass.new("CratesWindowDelegate", NSObject);
+    defer ImplCratesWindowDelegate.register();
+    _ = ImplCratesWindowDelegate.method("windowWillClose:", "@:@", CratesWindowDelegate.windowWillClose);
 }
 
-fn CratesApplicationDelegate_applicationDidFinishLaunching(self: AnyInstance, _: Selector, _: AnyInstance) callconv(.C) void {
-    const NSWindow = AnyClass.named("NSWindow");
-    const NSApplication = AnyClass.named("NSApplication");
-    const NSMenu = AnyClass.named("NSMenu");
-    const NSMenuItem = AnyClass.named("NSMenuItem");
-    const NSString = AnyClass.named("NSString");
-    const CratesWindowDelegate = AnyClass.named("CratesWindowDelegate");
+const CratesApplicationDelegate = packed struct { usingnamespace objc.foundation.NSObjectDerive(Self); const Self = @This();
+    any: AnyInstance,
     
-    // main_menu.msg("initWithTitle:", .{
-    //     NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Main Menu") }, objc.AnyInstance)
-    // }, void);
+    fn applicationShouldTerminateAfterLastWindowClosed(_: Self, _: objc.Selector, _: AnyInstance) callconv(.C) bool { return true; }
     
-    const nsapp = NSApplication.msg("sharedApplication", .{}, AnyInstance);
+    fn applicationWillTerminate(_: Self, _: objc.Selector, _: AnyInstance) callconv(.C) void {
+        _ = global_alloc.deinit();
+    }
     
-    const main_menu = nsapp.msg("mainMenu", .{}, AnyInstance);
-    
-    const window_menu_item = NSMenuItem
-        .msg("alloc", .{}, AnyInstance)
-        .msg("init", .{}, AnyInstance)
-        .msg("autorelease", .{}, AnyInstance);
-    window_menu_item.msg("setTitle:", .{
-        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Window") }, objc.AnyInstance)
-    }, void);
-    const window_menu = NSMenu
-        .msg("alloc", .{}, AnyInstance)
-        .msg("init", .{}, AnyInstance)
-        .msg("autorelease", .{}, AnyInstance);
-    window_menu_item.msg("setSubmenu:", .{ window_menu }, void);
-    nsapp.msg("setWindowsMenu:", .{ window_menu }, void);
-    
-    main_menu.msg("addItem:", .{ window_menu_item }, void);
-    
-    const help_menu_item = NSMenuItem.msg("alloc", .{}, AnyInstance)
-        .msg("init", .{}, AnyInstance)
-        .msg("autorelease", .{}, AnyInstance);
-    help_menu_item.msg("setTitle:", .{
-        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "Help") }, objc.AnyInstance)
-    }, void);
-    const help_menu = NSMenu.msg("alloc", .{}, AnyInstance)
-        .msg("init", .{}, AnyInstance)
-        .msg("autorelease", .{}, AnyInstance);
-    help_menu_item.msg("setSubmenu:", .{ help_menu }, void);
-    nsapp.msg("setHelpMenu:", .{ help_menu }, void);
-    
-    main_menu.msg("addItem:", .{ help_menu_item }, void);
-    
-    const rect = NSRect { .x = 0, .y = 0, .w = 800, .h = 600 };
-    const style = NSWindowStyleMask {};
-    const backing: objc.foundation.NSUInteger = 2;
-    const nswindow = NSWindow
-        .msg("alloc", .{}, AnyInstance)
-        .msg("initWithContentRect:styleMask:backing:defer:", .{ rect, style, backing, false }, AnyInstance);
-    // nswindow.msg("setMinSize:", .{ NSSize { .w = 400, .h = 500 } }, void);
-    if (!nswindow.msg("setFrameUsingName:", .{
-        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
-    }, bool)) nswindow.msg("center", .{}, void);
-    
-    _ = nswindow.msg("setFrameAutosaveName:", .{
-        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
-    }, bool);
-    
-    const delegate = CratesWindowDelegate
-        .msg("alloc", .{}, AnyInstance)
-        .msg("autorelease", .{}, AnyInstance);
-    
-    nswindow.msg("setDelegate:", .{ delegate }, void);
-    
-    NSApplication.msg("sharedApplication", .{}, AnyInstance).msg("activateIgnoringOtherApps:", .{ true }, void);
-    nswindow.msg("makeKeyAndOrderFront:", .{ self }, void);
-}
-
-const NSRect = extern struct { x: f64, y: f64, w: f64, h: f64 };
-const NSSize = extern struct { w: f64, h: f64 };
-
-const NSWindowStyleMask = packed struct (usize) {
-    titled: bool = true,
-    closable: bool = true,
-    minimizable: bool = true,
-    resizable: bool = true,
-    _pad: u60 = 0
+    fn applicationDidFinishLaunching(self: Self, _: objc.Selector, _: AnyInstance) callconv(.C) void {
+        const nsapp = NSApplication.sharedApplication();
+        
+        const main_menu = nsapp.mainMenu();
+        
+        const window_menu_item = NSMenuItem.alloc().init().autorelease();
+        window_menu_item.setTitle(NSStr("Window"));
+        
+        const window_menu = NSMenu.alloc().init().autorelease();
+        window_menu_item.setSubmenu(window_menu);
+        nsapp.setWindowsMenu(window_menu);
+        
+        main_menu.addItem(window_menu_item);
+        
+        const help_menu_item = NSMenuItem.alloc().init().autorelease();
+        help_menu_item.setTitle(NSStr("Help"));
+        const help_menu = NSMenu.alloc().init().autorelease();
+        help_menu_item.setSubmenu(help_menu);
+        nsapp.setHelpMenu(help_menu);
+        
+        main_menu.addItem(help_menu_item);
+        
+        const nswindow = NSWindow.alloc().initWithContentRect_styleMask_backing_defer(
+            .{ .x = 0, .y = 0, .w = 800, .h = 600 }, .{}, .buffered, false
+        );
+        nswindow.setMinSize(.{ .w = 400, .h = 500 });
+        if (!nswindow.setFrameUsingName(NSStr("CratesApplicationWindow"))) nswindow.center();
+        
+        _ = nswindow.setFrameAutosaveName(NSStr("CratesApplicationWindow"));
+        
+        nswindow.setDelegate(CratesWindowDelegate.alloc().init().autorelease().any);
+        
+        nsapp.activateIgnoringOtherApps(true);
+        nswindow.makeKeyAndOrderFront(self.any);
+    }
 };
 
-fn CratesWindowDelegate_windowWillClose(_: AnyInstance, _: Selector, notification: AnyInstance) callconv(.C) void {
-    const NSString = AnyClass.named("NSString");
+const CratesWindowDelegate = packed struct { usingnamespace objc.foundation.NSObjectDerive(Self); const Self = @This();
+    any: AnyInstance,
     
-    const nswindow = notification.msg("object", .{}, AnyInstance);
-    
-    nswindow.msg("saveFrameUsingName:", .{
-        NSString.msg("stringWithUTF8String:", .{ @as([*c]const u8, "CratesApplicationWindow") }, objc.AnyInstance)
-    }, void);
-}
+    fn windowWillClose(_: AnyInstance, _: objc.Selector, notification: NSNotification) callconv(.C) void {
+        notification.object().as(NSWindow).saveFrameUsingName(NSStr("CratesApplicationWindow"));
+    }
+};
