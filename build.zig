@@ -47,6 +47,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     
+    const objc = b.dependency("objc", .{
+        .target = target,
+        .optimize = optimize
+    });
+    
     const exe = b.addExecutable(.{
         .name = "crates",
         .root_source_file = b.path("src/main.zig"),
@@ -65,6 +70,10 @@ pub fn build(b: *std.Build) !void {
     // to do so using a container (if a bit wasteful).
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
     if (target.result.os.tag == .macos and target.query.isNative()) {
+        exe.root_module.addImport("objc", objc.module("objc"));
+        exe.linkSystemLibrary("objc");
+        exe.linkFramework("Foundation");
+        
         if (!cocoa) {
             exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
             exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
@@ -79,10 +88,7 @@ pub fn build(b: *std.Build) !void {
             exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
         } else {
             exe.linkFramework("Cocoa");
-            exe.linkFramework("Foundation");
         }
-        
-        exe.linkSystemLibrary("objc");
     } else if (target.query.isNative()) {
         exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
         exe.addIncludePath(.{ .cwd_relative = "/usr/include" });

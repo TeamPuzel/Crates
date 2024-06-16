@@ -1,10 +1,10 @@
 const std = @import("std");
+const objc = @import("objc");
 const builtin = @import("builtin");
 const c = @import("c.zig");
 const config = @import("config");
 
 const api = @import("api.zig");
-const objc = @import("objc/objc.zig");
 
 var global_alloc = std.heap.GeneralPurposeAllocator(.{}) {};
 pub const alloc = global_alloc.allocator();
@@ -520,8 +520,8 @@ fn searchSubmitReal(response: []const u8) void {
 
 fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
     if (builtin.target.os.tag == .macos) { // Adwaita/GTK can't open links on macOS
-        const autoreleasepool = objc.AutoReleasePool.init();
-        defer autoreleasepool.deinit();
+        const autoreleasepool = objc.AutoReleasePool.push();
+        defer autoreleasepool.pop();
         
         const NSWorkspace = objc.AnyClass.named("NSWorkspace");
         const NSURL = objc.AnyClass.named("NSURL");
@@ -588,8 +588,8 @@ const NSMenuItem = cocoa.NSMenuItem;
 fn cocoaMain() !noreturn {
     registerClasses();
     
-    const autoreleasepool = AutoReleasePool.init();
-    defer autoreleasepool.deinit();
+    const autoreleasepool = AutoReleasePool.push();
+    defer autoreleasepool.pop();
     
     const nsapp = NSApplication.sharedApplication();
     _ = nsapp.setActivationPolicy(.regular);
@@ -655,6 +655,7 @@ const CratesApplicationDelegate = packed struct { usingnamespace objc.foundation
         _ = nswindow.setFrameAutosaveName(NSStr("CratesApplicationWindow"));
         
         nswindow.setDelegate(CratesWindowDelegate.alloc().init().autorelease().any);
+        nswindow.setTitle(NSStr("Crates"));
         
         nsapp.activateIgnoringOtherApps(true);
         nswindow.makeKeyAndOrderFront(self.any);
