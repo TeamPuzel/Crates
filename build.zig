@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const suggested_version = "0.3.0";
+const suggested_version = "0.4.0";
 const id = "com.github.TeamPuzel.Crates";
 
 const bundle_targets: []const std.Target.Query = &.{
@@ -9,18 +9,50 @@ const bundle_targets: []const std.Target.Query = &.{
 };
 
 pub fn build(b: *std.Build) !void {
+    const standard_target = b.standardTargetOptions(.{});
+    const standard_optimize = b.standardOptimizeOption(.{});
+    
     const stable = b.option(bool, "stable", "Configure the application to the stable appearance") orelse false;
     const build_id = b.option(u16, "build-id", "Manually specify a value") orelse std.crypto.random.int(u16);
     const version = b.option([]const u8, "version", "Manually specify a value") orelse suggested_version;
-    const cocoa = b.option(bool, "cocoa", "Use a native frontend on macOS") orelse false;
     
-    const options = b.addOptions();
-    options.addOption(bool, "stable", stable);
-    options.addOption(u16, "build_id", build_id);
-    options.addOption([]const u8, "version", version);
-    options.addOption(bool, "cocoa", cocoa);
+    const config = b.addOptions();
+    config.addOption(bool, "stable", stable);
+    config.addOption(u16, "build_id", build_id);
+    config.addOption([]const u8, "version", version);
     
-    // MARK: - Resources -----------------------------------------------------------------------------------------------
+    // MARK: - Shared code ---------------------------------------------------------------------------------------------
+    
+    const shared = b.createModule(.{
+        .root_source_file = b.path("src/shared/root.zig")
+    });
+    
+    const objc = b.dependency("objc", .{
+        .target = standard_target,
+        .optimize = standard_optimize
+    });
+    
+    // MARK: - Local Cocoa build ---------------------------------------------------------------------------------------
+    
+    const cocoa_exe = b.addExecutable(.{
+        .name = "Crates",
+        .root_source_file = b.path("src/cocoa/main.zig"),
+        .target = standard_target,
+        .optimize = standard_optimize
+    });
+    cocoa_exe.root_module.addImport("shared", shared);
+    cocoa_exe.root_module.addOptions("config", config);
+    cocoa_exe.root_module.addImport("objc", objc.module("objc"));
+    
+    const cocoa_run = b.addRunArtifact(cocoa_exe);
+    cocoa_run.step.dependOn(&cocoa_exe.step);
+    
+    if (b.args) |args| cocoa_run.addArgs(args);
+    
+    const cocoa_run_step = b.step("run-cocoa", "Run using the native Cocoa frontend");
+    cocoa_run_step.dependOn(&cocoa_run.step);
+    
+    // MARK: - GNOME Resources -----------------------------------------------------------------------------------------
     
     const icon_step = try prepareIconBundleStep(b);
     
@@ -41,89 +73,83 @@ pub fn build(b: *std.Build) !void {
     desktop_file_install_step.step.dependOn(&desktop_file_write_step.step);
     desktop_file_install_step.dir = .bin;
     
-    // MARK: - Local build ---------------------------------------------------------------------------------------------
+    // MARK: - Local Adwaita build -------------------------------------------------------------------------------------
     // This defines a normal build and doesn't bundle anything.
     
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-    
-    const objc = b.dependency("objc", .{
-        .target = target,
-        .optimize = optimize
-    });
-    
-    const exe = b.addExecutable(.{
+    const gnome_exe = b.addExecutable(.{
         .name = "crates",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize
+        .root_source_file = b.path("src/gnome/main.zig"),
+        .target = standard_target,
+        .optimize = standard_optimize
     });
-    exe.linkLibC();
-    if (!cocoa) exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
+    gnome_exe.linkLibC();
+    gnome_exe.linkSystemLibrary2("libadwaita-1", .{ .preferred_link_mode = .dynamic, .weak = true });
+    gnome_exe.root_module.addImport("shared", shared);
+    gnome_exe.root_module.addOptions("config", config);
     
-    exe.step.dependOn(&resource_install_step.step);
-    exe.step.dependOn(&copy_icon_resource_step.step);
-    exe.step.dependOn(&desktop_file_install_step.step);
+    gnome_exe.step.dependOn(&resource_install_step.step);
+    gnome_exe.step.dependOn(&copy_icon_resource_step.step);
+    gnome_exe.step.dependOn(&desktop_file_install_step.step);
     
     // When cross compiling architecture specific libraries are needed.
     // While surprisingly no distribution I use allows conveniently downloading those, it is fairly easy
     // to do so using a container (if a bit wasteful).
     // TODO: Write a program/script to download cross compilation libraries from a distribution's mirror.
-    if (target.result.os.tag == .macos and target.query.isNative()) {
-        exe.root_module.addImport("objc", objc.module("objc"));
-        
-        if (!cocoa) {
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/pango/1.52.2/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/harfbuzz/8.5.0/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gdk-pixbuf/2.42.12/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/cairo/1.18.0/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/graphene/1.10.8/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/glib/2.80.2/lib" });
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/gettext/lib" });
-            
-            exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
-        }
-    } else if (target.query.isNative()) {
-        exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
-        exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
+    if (standard_target.result.os.tag == .macos and standard_target.query.isNative()) {
+        gnome_exe.root_module.addImport("objc", objc.module("objc"));
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gtk4/4.14.4/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/pango/1.52.2/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/harfbuzz/8.5.0/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/gdk-pixbuf/2.42.12/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/cairo/1.18.0/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/graphene/1.10.8/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/glib/2.80.2/lib" });
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/gettext/lib" });
+        gnome_exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/libadwaita/1.5.0/include" });
+    } else if (standard_target.query.isNative()) {
+        gnome_exe.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
+        gnome_exe.addIncludePath(.{ .cwd_relative = "/usr/include" });
     } else {
-        exe.addLibraryPath(b.path(try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/lib64", .{ @tagName(target.result.cpu.arch) })));
-        exe.addIncludePath(b.path(try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/include", .{ @tagName(target.result.cpu.arch) })));
+        gnome_exe.addLibraryPath(b.path(
+            try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/lib64", .{ @tagName(standard_target.result.cpu.arch) })
+        ));
+        gnome_exe.addIncludePath(b.path(
+            try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/include", .{ @tagName(standard_target.result.cpu.arch) })
+        ));
     }
     
-    exe.root_module.addOptions("config", options);
+    b.installArtifact(gnome_exe); // TODO: Improve
     
-    b.installArtifact(exe); // TODO: Improve
+    const gnome_run = b.addRunArtifact(gnome_exe);
+    gnome_run.setCwd(b.path("zig-out/bin"));
+    gnome_run.step.dependOn(b.getInstallStep());
+    
+    if (b.args) |args| gnome_run.addArgs(args);
+    
+    const gnome_run_step = b.step("run-gnome", "Run using the GNOME frontend");
+    gnome_run_step.dependOn(&gnome_run.step);
     
     // MARK: - Running -------------------------------------------------------------------------------------------------
     
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.setCwd(b.path("zig-out/bin"));
-    run_cmd.step.dependOn(b.getInstallStep());
-    
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    const run_step = b.step("run", "Run the app using the default platform frontend");
+    switch (standard_target.result.os.tag) {
+        .macos => run_step.dependOn(&cocoa_run.step),
+        else => run_step.dependOn(&gnome_run.step)
     }
     
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-    // run_step.dependOn(&resource_install_step.step);
-    
     // MARK: - Testing -------------------------------------------------------------------------------------------------
-    // There are no unit tests at the moment as basically all the code is just UI or trivial.
     
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize
+    const shared_unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/shared/root.zig"),
+        .target = standard_target,
+        .optimize = standard_optimize
     });
     
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    const run_cocoa_unit_tests = b.addRunArtifact(shared_unit_tests);
     
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
+    test_step.dependOn(&run_cocoa_unit_tests.step);
     
     // MARK: - Flatpak -------------------------------------------------------------------------------------------------
     
@@ -151,7 +177,7 @@ pub fn build(b: *std.Build) !void {
         bundle_exe.addIncludePath(b.path(
             try std.fmt.allocPrint(b.allocator, "cross/{s}/usr/include", .{ @tagName(bundle_target.cpu_arch.?) })
         ));
-        bundle_exe.root_module.addOptions("config", options);
+        bundle_exe.root_module.addOptions("config", config);
         
         const archive_dir = b.addWriteFiles();
         _ = archive_dir.step.dependOn(&bundle_exe.step);

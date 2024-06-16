@@ -10,6 +10,15 @@ zig build
 zig-out/bin/crates --install # or just -i
 ```
 
+Options for running are:
+```sh
+zig build run-cocoa # Cocoa frontend, macOS only
+zig build run-gnome # GNOME frontend, linux and macOS (but it's so bad on macOS it isn't usable)
+zig build run       # Default frontend for the target platform
+```
+
+Installing is somewhat unfinished right now.
+
 Building depends only on the libadwaita-1 shared library and headers, and of course the Zig compiler.
 It may not build with the latest compiler as it is quite unstable but it should always be up to date with my fork of Zig.
 

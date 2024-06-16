@@ -1,22 +1,13 @@
 const std = @import("std");
-const objc = @import("objc");
-const builtin = @import("builtin");
-const c = @import("c.zig");
 const config = @import("config");
-
-const api = @import("api.zig");
-
-var global_alloc = std.heap.GeneralPurposeAllocator(.{}) {};
-pub const alloc = global_alloc.allocator();
+const builtin = @import("builtin");
+const shared = @import("shared");
+const objc = if (builtin.target.os.tag == .macos) @import("objc") else struct {};
+const c = @import("c.zig");
 
 pub const version_string = if (config.stable)
     std.fmt.comptimePrint("{s}", .{ config.version })
     else std.fmt.comptimePrint("{s} dev {d}", .{ config.version, config.build_id });
-
-pub const std_options = std.Options {
-    .side_channels_mitigations = .none,
-    .logFn = if (config.cocoa) std.log.defaultLog else gtkLog
-};
 
 fn gtkLog(comptime message_level: std.log.Level, comptime _: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
     const msg = std.fmt.allocPrintZ(alloc, fmt, args) catch return;
@@ -32,6 +23,14 @@ fn gtkLog(comptime message_level: std.log.Level, comptime _: @TypeOf(.enum_liter
         msg
     );
 }
+
+pub const std_options = std.Options {
+    .side_channels_mitigations = .none,
+    .logFn = gtkLog
+};
+
+var global_alloc = std.heap.GeneralPurposeAllocator(.{}) {};
+const alloc = global_alloc.allocator();
 
 var app: *anyopaque = undefined;
 var window: *c.GtkWidget = undefined;
@@ -66,20 +65,16 @@ pub fn main() !void {
         }
     }
     
-    if (!config.cocoa) {
-        app = c.g_object_new(
-            c.adw_application_get_type(),
-            "application-id", "com.github.TeamPuzel.Crates",
-            c.NULL
-        ) orelse return error.CreatingApplication;
-        defer c.g_object_unref(app);
-        
-        _ = c.g_signal_connect_data(@ptrCast(app), "activate", activate, null, null, 0);
-        
-        _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
-    } else {
-        try cocoaMain();
-    }
+    app = c.g_object_new(
+        c.adw_application_get_type(),
+        "application-id", "com.github.TeamPuzel.Crates",
+        c.NULL
+    ) orelse return error.CreatingApplication;
+    defer c.g_object_unref(app);
+    
+    _ = c.g_signal_connect_data(@ptrCast(app), "activate", activate, null, null, 0);
+    
+    _ = c.g_application_run(@alignCast(@ptrCast(app)), 0, null);
 }
 
 fn registerResourceAt(path: [:0]const u8, silent: bool) error{GenericError}!void {
@@ -312,7 +307,7 @@ var response_buf: []u8 = undefined; // The void pointer was somehow corrupting t
 var response_buf_mutex = std.Thread.Mutex {};
 
 fn threadTask(query: []const u8) void {
-    const response = api.get(query, current_page, alloc) // Memory leak :)
+    const response = shared.Search.fetch(query, current_page, alloc) // Memory leak :)
     catch {
         c.g_main_context_invoke_full(null, c.G_PRIORITY_HIGH, &threadFailure, null, null);
         return;
@@ -348,7 +343,8 @@ fn searchSubmitReal(response: []const u8) void {
     
     const arena = list_arena.?.allocator();
     
-    const parsed = std.json.parseFromSliceLeaky(api.Search, arena, response, .{ .ignore_unknown_fields = true }) catch unreachable;
+    // TODO: Fix
+    const parsed = std.json.parseFromSliceLeaky(shared.Search, arena, response, .{ .ignore_unknown_fields = true }) catch unreachable;
     
     const content = c.gtk_box_new(c.GTK_ORIENTATION_VERTICAL, 0);
     
@@ -367,7 +363,7 @@ fn searchSubmitReal(response: []const u8) void {
     
     c.gtk_box_append(@ptrCast(header), c.gtk_separator_new(c.GTK_ORIENTATION_HORIZONTAL));
     
-    const total_pages = @divTrunc(parsed.meta.total, api.per_page) + 1;
+    const total_pages = @divTrunc(parsed.meta.total, shared.Search.per_page) + 1;
     
     const page_label = c.gtk_label_new(
         std.fmt.allocPrintZ(arena, "Page {d} of {d}", .{ current_page, total_pages }) catch unreachable
@@ -529,7 +525,7 @@ fn openAddressClosure(_: *c.GtkWidget, addr: [*c]const u8) callconv(.C) void {
         const shared_workspace = NSWorkspace.msg("sharedWorkspace", .{}, objc.AnyInstance);
         shared_workspace.msg("openURL:", .{
             NSURL.msg("URLWithString:", .{
-                NSString.stringWithUTF8String(addr)
+                objc.foundation.NSString.stringWithUTF8String(addr)
             }, objc.AnyInstance)
         }, void);
     } else {
@@ -566,106 +562,3 @@ fn about() callconv(.C) void {
 fn shortcuts() callconv(.C) void {
     
 }
-
-// MARK: - Cocoa -------------------------------------------------------------------------------------------------------
-
-const AutoReleasePool = objc.AutoReleasePool;
-const AnyInstance = objc.AnyInstance;
-const nil = objc.nil;
-
-const foundation = objc.foundation;
-const cocoa = objc.cocoa;
-
-const NSString = foundation.NSString;
-const NSStr = foundation.NSStr;
-
-const NSNotification = foundation.NSNotification;
-const NSApplication = cocoa.NSApplication;
-const NSWindow = cocoa.NSWindow;
-const NSMenu = cocoa.NSMenu;
-const NSMenuItem = cocoa.NSMenuItem;
-
-fn cocoaMain() !noreturn {
-    registerClasses();
-    
-    const autoreleasepool = AutoReleasePool.push();
-    defer autoreleasepool.pop();
-    
-    const nsapp = NSApplication.sharedApplication();
-    _ = nsapp.setActivationPolicy(.regular);
-    nsapp.setDelegate(CratesApplicationDelegate.alloc().autorelease().any);
-    nsapp.run();
-}
-
-fn registerClasses() void {
-    // Automatic registration is currently not implementable and does nothing
-    objc.autoRegisterClass(CratesApplicationDelegate);
-    objc.autoRegisterClass(CratesWindowDelegate);
-    
-    const NSObject = objc.AnyClass.named("NSObject");
-    
-    const ImplCratesApplicationDelegate = objc.AnyClass.new("CratesApplicationDelegate", NSObject);
-    defer ImplCratesApplicationDelegate.register();
-    _ = ImplCratesApplicationDelegate.method("applicationDidFinishLaunching:", "@:@", CratesApplicationDelegate.applicationDidFinishLaunching);
-    _ = ImplCratesApplicationDelegate.method("applicationShouldTerminateAfterLastWindowClosed:", "@:@", CratesApplicationDelegate.applicationShouldTerminateAfterLastWindowClosed);
-    _ = ImplCratesApplicationDelegate.method("applicationWillTerminate:", "@:@", CratesApplicationDelegate.applicationWillTerminate);
-    
-    const ImplCratesWindowDelegate = objc.AnyClass.new("CratesWindowDelegate", NSObject);
-    defer ImplCratesWindowDelegate.register();
-    _ = ImplCratesWindowDelegate.method("windowWillClose:", "@:@", CratesWindowDelegate.windowWillClose);
-}
-
-const CratesApplicationDelegate = packed struct { usingnamespace objc.foundation.NSObjectDerive(Self); const Self = @This();
-    any: AnyInstance,
-    
-    fn applicationShouldTerminateAfterLastWindowClosed(_: Self, _: objc.Selector, _: AnyInstance) callconv(.C) bool { return true; }
-    
-    fn applicationWillTerminate(_: Self, _: objc.Selector, _: AnyInstance) callconv(.C) void {
-        _ = global_alloc.deinit();
-    }
-    
-    fn applicationDidFinishLaunching(self: Self, _: objc.Selector, _: AnyInstance) callconv(.C) void {
-        const nsapp = NSApplication.sharedApplication();
-        
-        const main_menu = nsapp.mainMenu();
-        
-        const window_menu_item = NSMenuItem.alloc().init().autorelease();
-        window_menu_item.setTitle(NSStr("Window"));
-        
-        const window_menu = NSMenu.alloc().init().autorelease();
-        window_menu_item.setSubmenu(window_menu);
-        nsapp.setWindowsMenu(window_menu);
-        
-        main_menu.addItem(window_menu_item);
-        
-        const help_menu_item = NSMenuItem.alloc().init().autorelease();
-        help_menu_item.setTitle(NSStr("Help"));
-        const help_menu = NSMenu.alloc().init().autorelease();
-        help_menu_item.setSubmenu(help_menu);
-        nsapp.setHelpMenu(help_menu);
-        
-        main_menu.addItem(help_menu_item);
-        
-        const nswindow = NSWindow.alloc().initWithContentRect_styleMask_backing_defer(
-            .{ .x = 0, .y = 0, .w = 800, .h = 600 }, .{}, .buffered, false
-        );
-        nswindow.setMinSize(.{ .w = 400, .h = 500 });
-        if (!nswindow.setFrameUsingName(NSStr("CratesApplicationWindow"))) nswindow.center();
-        
-        _ = nswindow.setFrameAutosaveName(NSStr("CratesApplicationWindow"));
-        
-        nswindow.setDelegate(CratesWindowDelegate.alloc().init().autorelease().any);
-        nswindow.setTitle(NSStr("Crates"));
-        
-        nsapp.activateIgnoringOtherApps(true);
-        nswindow.makeKeyAndOrderFront(self.any);
-    }
-};
-
-const CratesWindowDelegate = packed struct { usingnamespace objc.foundation.NSObjectDerive(Self); const Self = @This();
-    any: AnyInstance,
-    
-    fn windowWillClose(_: AnyInstance, _: objc.Selector, notification: NSNotification) callconv(.C) void {
-        notification.object().as(NSWindow).saveFrameUsingName(NSStr("CratesApplicationWindow"));
-    }
-};
