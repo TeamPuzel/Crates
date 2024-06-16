@@ -2,6 +2,8 @@
 
 It is very minimal in design and implementation and written in Zig.
 
+On macOS this application depends on my [Objective-Zig](https://github.com/TeamPuzel/Objective-Zig) library.
+
 Building does not install anything on the system. Instead the binary can install the system files by itself:
 ```sh
 zig build
