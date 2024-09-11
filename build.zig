@@ -272,7 +272,7 @@ const ManifestSourceDerive = struct {
         return self;
     }
     
-    fn make(step: *std.Build.Step, _: std.Progress.Node) anyerror!void {
+    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
         const self: *ManifestSourceDerive = @fieldParentPtr("step", step);
         
         const sha_raw = try std.fs.openFileAbsolute(self.sha256.getPath(self.step.owner), .{});
